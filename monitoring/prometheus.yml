@@ -1,0 +1,6 @@
+# Point Prometheus at priompt's /metrics endpoint (-metrics-addr, default :2112).
+# Then add this Prometheus instance as a data source in Grafana.
+scrape_configs:
+  - job_name: priompt
+    static_configs:
+      - targets: ["localhost:2112"]

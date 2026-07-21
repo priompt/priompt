@@ -1,0 +1,9 @@
+version: v2
+# Remote plugins: only `buf` is needed locally — no protoc, no protoc-gen-* installs.
+plugins:
+  - remote: buf.build/protocolbuffers/go
+    out: gen
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go
+    out: gen
+    opt: paths=source_relative

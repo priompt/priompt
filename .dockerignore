@@ -1,0 +1,10 @@
+.git
+*.exe
+*.db
+*.db-*
+*.key
+*.crt
+*.pem
+node_modules
+__pycache__
+.claude

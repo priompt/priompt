@@ -1,0 +1,34 @@
+# One file, all config. Edit env + flags, then `docker compose up`.
+services:
+  priompt:
+    build: .
+    ports:
+      - "8443:8443"   # gRPC
+      - "2112:2112"   # Prometheus /metrics
+      - "4222:4222"   # NATS pub/sub
+    volumes:
+      - priompt-data:/data            # SQLite db persists here
+      # - ./tls:/tls:ro                 # uncomment to mount TLS material
+    environment:
+      PRIOMPT_TOKEN: "${PRIOMPT_TOKEN:-}"        # admin bearer token (blank = auth off)
+      PRIOMPT_EMBED_URL: "${PRIOMPT_EMBED_URL:-}" # blank = offline lexical embedder
+      PRIOMPT_EMBED_MODEL: "${PRIOMPT_EMBED_MODEL:-}"
+      PRIOMPT_EMBED_KEY: "${PRIOMPT_EMBED_KEY:-}"
+      PRIOMPT_REDIS_URL: "${PRIOMPT_REDIS_URL:-}" # blank = in-process cache
+    # All serve flags. Drop the ones you don't need.
+    command:
+      - serve
+      - -addr=:8443
+      - -db=/data/priompt.db
+      - -nats-addr=0.0.0.0:4222
+      - -metrics-addr=:2112
+      - -cache-ttl=30s
+      - -rate-limit=0
+      # - -tls-cert=/tls/server.crt
+      # - -tls-key=/tls/server.key
+      # - -client-ca=/tls/ca.crt        # enables mTLS
+      # - -tokens-file=/tls/tokens.txt
+    restart: unless-stopped
+
+volumes:
+  priompt-data:

@@ -1,0 +1,26 @@
+# Overlay: local TEI embedding server for testing the real (non-lexical) embedder.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.tei.yml up
+# Pick any HF embedding model:  EMBED_MODEL=intfloat/e5-large-v2 docker compose ... up
+# (Or skip TEI and point PRIOMPT_EMBED_URL at OpenAI/Ollama/llama.cpp — any
+#  OpenAI-compatible /v1/embeddings endpoint works; see docker-compose.yml.)
+# First start downloads the model and warms up — give it a minute.
+services:
+  priompt:
+    environment:
+      PRIOMPT_EMBED_URL: "http://tei/v1/embeddings"  # TEI's OpenAI-compatible route
+      PRIOMPT_EMBED_MODEL: "${EMBED_MODEL:-BAAI/bge-small-en-v1.5}"
+    depends_on:
+      - tei
+
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.6
+    command: ["--model-id", "${EMBED_MODEL:-BAAI/bge-small-en-v1.5}"]
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"   # set for gated/private Hub models; blank for public ones
+    ports:
+      - "8080:80"          # host access for poking it directly; priompt uses the internal name
+    volumes:
+      - tei-data:/data     # model cache persists across restarts
+
+volumes:
+  tei-data:

@@ -1,0 +1,168 @@
+syntax = "proto3";
+
+package priompt.v1;
+
+option go_package = "priompt/gen/priompt/v1;priomptv1";
+
+// PromptService serves validated prompts. Phase 1 is read-only over the wire;
+// writes happen via the `priompt put` CLI until promptctl lands (Phase 3).
+service PromptService {
+  rpc GetPrompt(GetPromptRequest) returns (GetPromptResponse);
+  // DiffPrompt runs the Semantic Propagation Diff between the stored prompt at
+  // `uri` (the original) and `new_template` (the edit), using the embedding
+  // model the server operator configured at startup.
+  rpc DiffPrompt(DiffPromptRequest) returns (DiffPromptResponse);
+  // PublishPrompt validates and stores a new prompt version on the server, then
+  // notifies subscribers over NATS. This is the write-through path that makes a
+  // repo a publisher (Phase 4).
+  rpc PublishPrompt(PublishPromptRequest) returns (PublishPromptResponse);
+
+  // History returns a prompt branch's commit log, newest first (first-parent).
+  rpc History(HistoryRequest) returns (HistoryResponse);
+  // CreateBranch forks a new branch from an existing one's tip.
+  rpc CreateBranch(CreateBranchRequest) returns (CreateBranchResponse);
+  // MergeBranch merges `from` into `into`, recording a two-parent merge commit.
+  rpc MergeBranch(MergeBranchRequest) returns (MergeBranchResponse);
+  // DiffCommits runs the semantic diff between any two commits of a prompt — the
+  // query-anything-in-history path.
+  rpc DiffCommits(DiffCommitsRequest) returns (DiffPromptResponse);
+  // SetBranch points a branch at an existing commit — the rollback / pin path.
+  // Moving "main" instantly changes the served version.
+  rpc SetBranch(SetBranchRequest) returns (SetBranchResponse);
+
+  // ListPrompts browses a repo like a filesystem: it returns every served-HEAD
+  // prompt whose URI starts with `prefix`, sorted. A "repo" is just a URI prefix;
+  // the caller derives the tree by splitting URIs on "/".
+  rpc ListPrompts(ListPromptsRequest) returns (ListPromptsResponse);
+}
+
+message ListPromptsRequest {
+  string prefix = 1; // e.g. "priompt://acme/support/"; empty = whole store (admin)
+}
+message ListPromptsResponse {
+  repeated PromptEntry entries = 1;
+}
+message PromptEntry {
+  string uri = 1;
+  string version_hash = 2;
+}
+
+message SetBranchRequest {
+  string uri = 1;
+  string branch = 2;      // empty = "main"
+  string commit_hash = 3; // the commit to point the branch at
+}
+message SetBranchResponse {
+  string version_hash = 1; // content now served on that branch
+}
+
+// Commit is one node in a prompt's history DAG.
+message Commit {
+  string hash = 1;
+  string version_hash = 2;
+  string parent = 3;
+  string parent2 = 4; // set only on merge commits
+  string author = 5;
+  string message = 6;
+  string created_at = 7; // RFC3339
+}
+
+message HistoryRequest {
+  string uri = 1;
+  string branch = 2; // empty = "main"
+}
+message HistoryResponse {
+  repeated Commit commits = 1;
+}
+
+message CreateBranchRequest {
+  string uri = 1;
+  string name = 2; // new branch
+  string from = 3; // source branch; empty = "main"
+}
+message CreateBranchResponse {
+  string commit_hash = 1; // tip the new branch points at
+}
+
+message MergeBranchRequest {
+  string uri = 1;
+  string into = 2; // empty = "main"
+  string from = 3;
+  string message = 4;
+}
+message MergeBranchResponse {
+  string commit_hash = 1; // the merge commit
+}
+
+message DiffCommitsRequest {
+  string uri = 1;
+  string from_hash = 2; // the original
+  string to_hash = 3;   // the edit
+}
+
+message GetPromptRequest {
+  // priompt://org/repo/prompt-name
+  string uri = 1;
+  // Optional: a branch name or commit hash to fetch a specific version.
+  // Empty returns the served HEAD of "main". Lets agents pin a version.
+  string ref = 2;
+}
+
+message GetPromptResponse {
+  string uri = 1;
+  string template = 2;
+  repeated string slots = 3;
+  // sha256 over template + slots; the Phase 2 cache key.
+  string version_hash = 4;
+  // The commit served. Set when fetched by ref; empty for the HEAD fast path.
+  // Pin to this for an exact point in history (version_hash pins content only).
+  string commit_hash = 5;
+}
+
+message PublishPromptRequest {
+  string uri = 1;
+  string template = 2;
+  repeated string slots = 3;
+  string message = 4; // optional commit message
+  string branch = 5;  // target branch; empty = "main" (the served HEAD)
+}
+
+message PublishPromptResponse {
+  string version_hash = 1;
+}
+
+message DiffPromptRequest {
+  string uri = 1;          // stored prompt to diff against (the original)
+  string new_template = 2; // the edited template
+}
+
+message DiffPromptResponse {
+  repeated Change changes = 1;
+}
+
+// Window is one point on a propagation curve (Signal 3).
+message Window {
+  int32 radius = 1;
+  double delta = 2;
+}
+
+// Change is one diff hunk with its three semantic signals.
+message Change {
+  // Signal 1 — the changed region (half-open line ranges, 0-based).
+  int32 old_start = 1;
+  int32 old_end = 2;
+  int32 new_start = 3;
+  int32 new_end = 4;
+  string kind = 5; // replace | insert | delete
+
+  // Signal 2 — semantic delta at the point of change.
+  double point_delta = 6;
+
+  // Signal 3 — propagation profile, each direction independent.
+  repeated Window up = 7;
+  repeated Window down = 8;
+  bool up_boundary = 9;   // up curve hit the file edge before flattening
+  bool down_boundary = 10;
+
+  string classification = 11; // structural | localized tweak | minor edit
+}
