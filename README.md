@@ -64,6 +64,7 @@ This is the **core server** repo. The ecosystem is five small repos:
 | --- | --- | --- |
 | **priompt** (this one) | The server: stores, versions, validates, serves, and distributes prompts | Whoever runs the infrastructure |
 | **cli** | `promptctl` — authoring tool; prompts as files in git, with validation and semantic diff | Prompt writers |
+| **auth** | `priompt-auth` — token issuer: SSO logins and service accounts become short-lived JWTs | Enterprises needing SSO, rotation, offboarding |
 | **python-sdk** | Python client library | Python agents/apps |
 | **js-sdk** | JavaScript client library | Node agents/apps |
 | **db-adapters** | The storage engine as a reusable library (SQLite, PostgreSQL) | Tool builders |
@@ -408,7 +409,8 @@ Selected flags:
 
 - **`serve`** — `-addr`, `-db`, `-tls-cert`, `-tls-key`, `-client-ca` (mTLS),
   `-tokens-file`, `-cache-ttl`, `-redis-url`, `-embed-url`, `-embed-model`,
-  `-nats-addr`, `-metrics-addr`, `-rate-limit`, `-rate-burst`.
+  `-nats-addr`, `-metrics-addr`, `-rate-limit`, `-rate-burst`,
+  `-auth-jwks-url` (trust priompt-auth JWTs).
 - **`put`** — `-uri`, `-file` (`-` for stdin), `-slot` (repeatable), `-db`,
   `-force`, `-embed-url`, `-embed-model`.
 - **`diff` / `publish`** — `-addr`, `-uri`, `-file`, `-slot`, `-tls`, `-ca-cert`,
@@ -464,7 +466,7 @@ or any gRPC client using the `.proto` — Priompt is language-agnostic by design
 
 ```mermaid
 flowchart LR
-    R["Incoming request<br/>+ Bearer token"] --> T{"Token known<br/>and unexpired?"}
+    R["Incoming request<br/>+ Bearer token"] --> T{"Static token known, or<br/>valid priompt-auth JWT?"}
     T -- no --> U["❌ Unauthenticated"]
     T -- yes --> O{"Token's org matches<br/>the URI's org?"}
     O -- no --> P["❌ PermissionDenied"]
@@ -518,6 +520,20 @@ rotating-key  acme  2026-12-31 rw  # scoped + expires (date or RFC3339) + write
 
 > Authorization is org-prefix scoping plus a read/write grant; per-prompt rules
 > are not modeled.
+
+**Enterprise tokens (SSO, short-lived).** For SSO logins, service accounts,
+and minutes-long credentials, run **priompt-auth** (the auth repo) and point
+the server at its key endpoint:
+
+```sh
+priompt serve -tokens-file tokens.txt -auth-jwks-url http://auth-host:8444/jwks
+```
+
+The server then also accepts the EdDSA JWTs that service issues, verifying
+them **offline** against cached `/jwks` keys — no per-request call to the
+issuer, and static tokens keep working alongside. A JWT carries the same
+permission model (`org` scope, `rw` grant, expiry); SSO group mapping,
+rotation, and offboarding live in the issuer and your IdP.
 
 **TLS.** Pass `-tls-cert` and `-tls-key` to terminate TLS; on the client set
 `tls=True` (and optionally `ca_cert`). Without these the server listens in
@@ -692,6 +708,7 @@ curl localhost:2112/metrics
 | `PRIOMPT_EMBED_MODEL` | server, `put` | embedding model name |
 | `PRIOMPT_EMBED_KEY` | server, `put` | API key for the embeddings endpoint |
 | `PRIOMPT_REDIS_URL` | server | Redis URL for a shared L2 cache |
+| `PRIOMPT_JWKS_URL` | server | priompt-auth `/jwks` URL; accept its short-lived JWTs |
 | `PRIOMPT_ENCRYPTION_KEY` | server, `put`, `backup` | base64 32-byte key; AES-256-GCM at-rest encryption |
 | `PRIOMPT_GIT_TOKEN` | `promptctl` (cli repo) | token for HTTPS git remotes |
 
@@ -782,10 +799,11 @@ Project layout:
 proto/priompt/v1/prompt.proto      The service contract. Source of truth.
 gen/                               Generated Go code (do not edit).
 
+internal/auth/auth.go              The gatekeeper: static tokens + priompt-auth JWTs, org scoping.
 internal/validate/validate.go      Prompt well-formedness — the one definition of "valid".
 internal/store/store.go            SQLite/Postgres storage: prompts, commits, refs, migrations.
 internal/semdiff/semdiff.go        The semantic propagation diff engine.
-internal/server/server.go          gRPC handlers + auth interceptor.
+internal/server/server.go          gRPC handlers.
 internal/server/observability.go   Metrics, audit-log, rate-limit interceptors.
 internal/server/cache.go           In-process and Redis L2 caches.
 internal/pubsub/pubsub.go          Embedded NATS publisher + subscriber.

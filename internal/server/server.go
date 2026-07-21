@@ -2,17 +2,15 @@ package server
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"strings"
 	"time"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	pb "priompt/gen/priompt/v1"
+	"priompt/internal/auth"
 	"priompt/internal/semdiff"
 	"priompt/internal/store"
 	"priompt/internal/validate"
@@ -41,10 +39,10 @@ func NewServer(st *store.Store, cache Cache, emb semdiff.Embedder, n Notifier) *
 // PublishPrompt validates, stores a new prompt version, invalidates its cache
 // entry, and notifies subscribers — the write-through publisher path.
 func (s *Server) PublishPrompt(ctx context.Context, req *pb.PublishPromptRequest) (*pb.PublishPromptResponse, error) {
-	if err := authorize(ctx, req.GetUri()); err != nil {
+	if err := auth.Authorize(ctx, req.GetUri()); err != nil {
 		return nil, err
 	}
-	if err := requireWrite(ctx); err != nil {
+	if err := auth.RequireWrite(ctx); err != nil {
 		return nil, err
 	}
 	if err := validate.Prompt(req.GetUri(), req.GetTemplate(), req.GetSlots()); err != nil {
@@ -74,7 +72,7 @@ func (s *Server) PublishPrompt(ctx context.Context, req *pb.PublishPromptRequest
 	// Commit on the target branch. On main this also materializes the served HEAD
 	// (the prompts table) in the same transaction. Author is the caller's org
 	// scope; message is carried from the request.
-	if _, err := s.Store.Commit(ctx, req.GetUri(), branch, req.GetTemplate(), req.GetSlots(), scopeOf(ctx), req.GetMessage()); err != nil {
+	if _, err := s.Store.Commit(ctx, req.GetUri(), branch, req.GetTemplate(), req.GetSlots(), auth.ScopeOf(ctx), req.GetMessage()); err != nil {
 		return nil, status.Errorf(codes.Internal, "store failed: %v", err)
 	}
 	// Cache and subscribers track the served HEAD only — branch work is invisible
@@ -94,7 +92,7 @@ func (s *Server) PublishPrompt(ctx context.Context, req *pb.PublishPromptRequest
 
 func (s *Server) GetPrompt(ctx context.Context, req *pb.GetPromptRequest) (*pb.GetPromptResponse, error) {
 	uri := req.GetUri()
-	if err := authorize(ctx, uri); err != nil {
+	if err := auth.Authorize(ctx, uri); err != nil {
 		return nil, err
 	}
 	// Fetch a pinned version (branch or commit) instead of the served HEAD.
@@ -135,7 +133,7 @@ func (s *Server) GetPrompt(ctx context.Context, req *pb.GetPromptRequest) (*pb.G
 // prefix's org, so a scoped token can only list within its own org.
 func (s *Server) ListPrompts(ctx context.Context, req *pb.ListPromptsRequest) (*pb.ListPromptsResponse, error) {
 	prefix := req.GetPrefix()
-	if err := authorize(ctx, prefix); err != nil {
+	if err := auth.Authorize(ctx, prefix); err != nil {
 		return nil, err
 	}
 	prompts, err := s.Store.List(ctx, prefix)
@@ -152,7 +150,7 @@ func (s *Server) ListPrompts(ctx context.Context, req *pb.ListPromptsRequest) (*
 // DiffPrompt runs the Semantic Propagation Diff between the stored prompt (the
 // original) and the supplied edited template, using the server's embedder.
 func (s *Server) DiffPrompt(ctx context.Context, req *pb.DiffPromptRequest) (*pb.DiffPromptResponse, error) {
-	if err := authorize(ctx, req.GetUri()); err != nil {
+	if err := auth.Authorize(ctx, req.GetUri()); err != nil {
 		return nil, err
 	}
 	p, err := s.Store.Get(ctx, req.GetUri())
@@ -181,7 +179,7 @@ func branchErr(err error) error {
 }
 
 func (s *Server) History(ctx context.Context, req *pb.HistoryRequest) (*pb.HistoryResponse, error) {
-	if err := authorize(ctx, req.GetUri()); err != nil {
+	if err := auth.Authorize(ctx, req.GetUri()); err != nil {
 		return nil, err
 	}
 	log, err := s.Store.Log(ctx, req.GetUri(), branchOr(req.GetBranch()))
@@ -199,10 +197,10 @@ func (s *Server) History(ctx context.Context, req *pb.HistoryRequest) (*pb.Histo
 }
 
 func (s *Server) CreateBranch(ctx context.Context, req *pb.CreateBranchRequest) (*pb.CreateBranchResponse, error) {
-	if err := authorize(ctx, req.GetUri()); err != nil {
+	if err := auth.Authorize(ctx, req.GetUri()); err != nil {
 		return nil, err
 	}
-	if err := requireWrite(ctx); err != nil {
+	if err := auth.RequireWrite(ctx); err != nil {
 		return nil, err
 	}
 	if req.GetName() == "" {
@@ -219,13 +217,13 @@ func (s *Server) CreateBranch(ctx context.Context, req *pb.CreateBranchRequest) 
 }
 
 func (s *Server) MergeBranch(ctx context.Context, req *pb.MergeBranchRequest) (*pb.MergeBranchResponse, error) {
-	if err := authorize(ctx, req.GetUri()); err != nil {
+	if err := auth.Authorize(ctx, req.GetUri()); err != nil {
 		return nil, err
 	}
-	if err := requireWrite(ctx); err != nil {
+	if err := auth.RequireWrite(ctx); err != nil {
 		return nil, err
 	}
-	hash, err := s.Store.Merge(ctx, req.GetUri(), branchOr(req.GetInto()), req.GetFrom(), scopeOf(ctx), req.GetMessage())
+	hash, err := s.Store.Merge(ctx, req.GetUri(), branchOr(req.GetInto()), req.GetFrom(), auth.ScopeOf(ctx), req.GetMessage())
 	if err != nil {
 		return nil, branchErr(err)
 	}
@@ -237,7 +235,7 @@ func (s *Server) MergeBranch(ctx context.Context, req *pb.MergeBranchRequest) (*
 }
 
 func (s *Server) DiffCommits(ctx context.Context, req *pb.DiffCommitsRequest) (*pb.DiffPromptResponse, error) {
-	if err := authorize(ctx, req.GetUri()); err != nil {
+	if err := auth.Authorize(ctx, req.GetUri()); err != nil {
 		return nil, err
 	}
 	from, err := s.Store.GetCommit(ctx, req.GetFromHash())
@@ -279,10 +277,10 @@ func (s *Server) getByRef(ctx context.Context, uri, ref string) (*pb.GetPromptRe
 // changes the served HEAD, so it invalidates the cache and notifies subscribers
 // with the classification of the change away from the old HEAD.
 func (s *Server) SetBranch(ctx context.Context, req *pb.SetBranchRequest) (*pb.SetBranchResponse, error) {
-	if err := authorize(ctx, req.GetUri()); err != nil {
+	if err := auth.Authorize(ctx, req.GetUri()); err != nil {
 		return nil, err
 	}
-	if err := requireWrite(ctx); err != nil {
+	if err := auth.RequireWrite(ctx); err != nil {
 		return nil, err
 	}
 	if req.GetCommitHash() == "" {
@@ -362,98 +360,4 @@ func toWindows(ws []semdiff.Window) []*pb.Window {
 
 func splitLines(s string) []string {
 	return strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
-}
-
-type scopeKey struct{}
-type writeKey struct{}
-
-// requireWrite gates mutating RPCs on the token's write capability. The key is
-// absent when auth is disabled or the caller is unscoped admin (full access), so
-// only an explicit read-only token (writeKey == false) is denied.
-func requireWrite(ctx context.Context) error {
-	if w, ok := ctx.Value(writeKey{}).(bool); ok && !w {
-		return status.Error(codes.PermissionDenied, "token is read-only")
-	}
-	return nil
-}
-
-// Token is a bearer credential: the org it is scoped to ("" = admin, all orgs),
-// an optional expiry (zero = never expires), and whether it may write. Write is
-// opt-in — a token authors only if Write is set; otherwise it is read-only.
-// Rotation is just overlapping tokens — issue the new one, let the old one's
-// Expires lapse, then drop it.
-type Token struct {
-	Org     string
-	Expires time.Time
-	Write   bool
-}
-
-// AuthInterceptor authenticates bearer tokens, rejects expired ones, and
-// attaches each token's org scope to the context. An empty token map disables
-// auth, leaving every request unscoped (full access).
-func AuthInterceptor(tokens map[string]Token) grpc.UnaryServerInterceptor {
-	type entry struct {
-		want    []byte
-		org     string
-		expires time.Time
-		write   bool
-	}
-	wants := make([]entry, 0, len(tokens))
-	for t, tok := range tokens {
-		wants = append(wants, entry{want: []byte("Bearer " + t), org: tok.Org, expires: tok.Expires, write: tok.Write})
-	}
-	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if len(wants) == 0 {
-			return handler(ctx, req)
-		}
-		var got []byte
-		if md, ok := metadata.FromIncomingContext(ctx); ok {
-			if v := md.Get("authorization"); len(v) > 0 {
-				got = []byte(v[0])
-			}
-		}
-		ok, org, write := false, "", false
-		var expires time.Time
-		for _, w := range wants { // no early break: keep timing independent of which key matches
-			if subtle.ConstantTimeCompare(got, w.want) == 1 {
-				ok, org, expires, write = true, w.org, w.expires, w.write
-			}
-		}
-		if !ok {
-			return nil, status.Error(codes.Unauthenticated, "invalid or missing token")
-		}
-		if !expires.IsZero() && time.Now().After(expires) {
-			return nil, status.Error(codes.Unauthenticated, "token expired")
-		}
-		ctx = context.WithValue(ctx, scopeKey{}, org)
-		return handler(context.WithValue(ctx, writeKey{}, write), req)
-	}
-}
-
-// scopeOf returns the caller's org scope as the commit author, "anonymous" when
-// auth is disabled (no scope on the context).
-func scopeOf(ctx context.Context) string {
-	if scope, _ := ctx.Value(scopeKey{}).(string); scope != "" {
-		return scope
-	}
-	return "anonymous"
-}
-
-// authorize enforces the caller's org scope: a token scoped to org "acme" may
-// only touch priompt://acme/… An empty scope (admin, or auth disabled) passes.
-func authorize(ctx context.Context, uri string) error {
-	scope, _ := ctx.Value(scopeKey{}).(string)
-	if scope == "" || scope == orgOf(uri) {
-		return nil
-	}
-	return status.Errorf(codes.PermissionDenied, "token not authorized for org %q", orgOf(uri))
-}
-
-// orgOf returns the first path segment of a prompt URI (the owning org).
-func orgOf(uri string) string {
-	s := strings.TrimPrefix(uri, "priompt://")
-	if i := strings.IndexByte(s, '/'); i >= 0 {
-		return s[:i]
-	}
-	return s
 }

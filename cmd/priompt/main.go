@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	pb "priompt/gen/priompt/v1"
+	"priompt/internal/auth"
 	"priompt/internal/pubsub"
 	"priompt/internal/semdiff"
 	"priompt/internal/server"
@@ -96,8 +97,13 @@ func serve(args []string) {
 	rateLimit := fs.Float64("rate-limit", 0, "per-org request/sec limit; 0 disables")
 	rateBurst := fs.Int("rate-burst", 0, "per-org burst size; 0 = equal to -rate-limit")
 	seed := fs.Bool("seed", os.Getenv("PRIOMPT_SEED") != "false", "seed a demo prompt when it is absent (PRIOMPT_SEED=false disables)")
+	jwksURL := fs.String("auth-jwks-url", os.Getenv("PRIOMPT_JWKS_URL"), "priompt-auth /jwks URL; accepts its short-lived JWTs alongside static tokens")
 	fs.Parse(args)
 	tokens := loadTokens(*tokensFile)
+	var jwtKeys *auth.KeySet
+	if *jwksURL != "" {
+		jwtKeys = auth.NewKeySet(*jwksURL)
+	}
 	embedKey := os.Getenv("PRIOMPT_EMBED_KEY")
 
 	st, err := store.Open(*dbPath)
@@ -138,7 +144,7 @@ func serve(args []string) {
 	audit := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	opts := []grpc.ServerOption{grpc.ChainUnaryInterceptor(
 		server.MetricsInterceptor,                       // outermost: observes every outcome
-		server.AuthInterceptor(tokens),                  // sets org scope
+		auth.Interceptor(tokens, jwtKeys),               // sets org scope
 		server.AuditInterceptor(audit),                  // logs with scope, sees rate-limit rejections
 		server.RateLimitInterceptor(*rateLimit, *rateBurst),
 	)}
@@ -249,10 +255,10 @@ func cacheName(redisURL string, ttl time.Duration) string {
 // else as the org. Blank lines and # comments are ignored. An empty result =
 // auth disabled. To rotate: add the new token, give the old one a near-future
 // expiry, drop it once it lapses.
-func loadTokens(file string) map[string]server.Token {
-	tokens := map[string]server.Token{}
+func loadTokens(file string) map[string]auth.Token {
+	tokens := map[string]auth.Token{}
 	if t := os.Getenv("PRIOMPT_TOKEN"); t != "" {
-		tokens[t] = server.Token{Write: true} // admin, never expires
+		tokens[t] = auth.Token{Write: true} // admin, never expires
 	}
 	if file != "" {
 		b, err := os.ReadFile(file)
@@ -265,7 +271,7 @@ func loadTokens(file string) map[string]server.Token {
 				continue
 			}
 			fields := strings.Fields(line)
-			tok := server.Token{}
+			tok := auth.Token{}
 			for _, f := range fields[1:] {
 				switch {
 				case f == "rw":

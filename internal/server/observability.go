@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"log/slog"
+
 	"net/http"
+	"priompt/internal/auth"
 	"sync"
 	"time"
 
@@ -49,7 +51,7 @@ func AuditInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		start := time.Now()
 		resp, err := handler(ctx, req)
-		scope, _ := ctx.Value(scopeKey{}).(string)
+		scope := auth.Scope(ctx)
 		logger.Info("rpc",
 			"method", info.FullMethod,
 			"org", scope,
@@ -89,7 +91,7 @@ func RateLimitInterceptor(rps float64, burst int) grpc.UnaryServerInterceptor {
 	// become caller-controlled.
 	limiters := map[string]*rate.Limiter{}
 	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		scope, _ := ctx.Value(scopeKey{}).(string)
+		scope := auth.Scope(ctx)
 		mu.Lock()
 		lim := limiters[scope]
 		if lim == nil {

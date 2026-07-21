@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+
+	"priompt/internal/auth"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -15,7 +17,7 @@ func TestRateLimitInterceptor(t *testing.T) {
 
 	// burst=2: first two calls for an org pass, third is rejected.
 	rl := RateLimitInterceptor(1, 2)
-	acme := context.WithValue(context.Background(), scopeKey{}, "acme")
+	acme := auth.WithScope(context.Background(), "acme")
 	for i := 0; i < 2; i++ {
 		if _, err := rl(acme, nil, info, h); err != nil {
 			t.Fatalf("call %d should pass: %v", i, err)
@@ -25,7 +27,7 @@ func TestRateLimitInterceptor(t *testing.T) {
 		t.Errorf("third call should be rate-limited, got %v", err)
 	}
 	// Separate org has its own bucket.
-	other := context.WithValue(context.Background(), scopeKey{}, "other")
+	other := auth.WithScope(context.Background(), "other")
 	if _, err := rl(other, nil, info, h); err != nil {
 		t.Errorf("other org should have its own bucket: %v", err)
 	}
