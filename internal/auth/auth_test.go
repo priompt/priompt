@@ -9,6 +9,15 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+// interceptorFor mirrors the serve wiring: a static provider only when tokens
+// exist, so an empty map means "no providers" (auth disabled).
+func interceptorFor(tokens map[string]Token) grpc.UnaryServerInterceptor {
+	if len(tokens) == 0 {
+		return Interceptor()
+	}
+	return Interceptor(NewStatic(tokens))
+}
+
 // call runs the interceptor and returns whether the handler ran and the scope
 // the interceptor attached (empty if it didn't run or scope was admin/"").
 func call(tokens map[string]Token, header string) (passed bool, scope string) {
@@ -18,10 +27,10 @@ func call(tokens map[string]Token, header string) (passed bool, scope string) {
 	}
 	h := func(ctx context.Context, req any) (any, error) {
 		passed = true
-		scope, _ = ctx.Value(scopeKey{}).(string)
+		scope = Scope(ctx)
 		return nil, nil
 	}
-	Interceptor(tokens, nil)(ctx, nil, &grpc.UnaryServerInfo{}, h)
+	interceptorFor(tokens)(ctx, nil, &grpc.UnaryServerInfo{}, h)
 	return passed, scope
 }
 
@@ -66,7 +75,7 @@ func writeAllowed(tokens map[string]Token, header string) (passed, canWrite bool
 		canWrite = RequireWrite(ctx) == nil
 		return nil, nil
 	}
-	Interceptor(tokens, nil)(ctx, nil, &grpc.UnaryServerInfo{}, h)
+	interceptorFor(tokens)(ctx, nil, &grpc.UnaryServerInfo{}, h)
 	return passed, canWrite
 }
 
@@ -85,14 +94,14 @@ func TestWriteScope(t *testing.T) {
 	if _, w := writeAllowed(tokens, "Bearer admin"); !w {
 		t.Error("admin rw token must be allowed to write")
 	}
-	// Auth disabled (empty token set, no keys) leaves writeKey unset — full access.
+	// Auth disabled (no providers) leaves no identity on the context — full access.
 	if ok, w := writeAllowed(map[string]Token{}, ""); !ok || !w {
 		t.Error("auth-disabled must permit writes")
 	}
 }
 
 func TestAuthorize(t *testing.T) {
-	scoped := context.WithValue(context.Background(), scopeKey{}, "acme")
+	scoped := WithIdentity(context.Background(), Identity{Org: "acme"})
 	if err := Authorize(scoped, "priompt://acme/r/p"); err != nil {
 		t.Errorf("acme token on acme prompt should pass: %v", err)
 	}

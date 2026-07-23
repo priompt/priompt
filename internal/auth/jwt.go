@@ -1,16 +1,10 @@
 package auth
 
 // JWT verification for tokens minted by the priompt-auth service (the auth
-// repo). The claims contract shared between the two repos:
-//
-//	header: {"alg":"EdDSA","typ":"JWT","kid":"<key id>"}
-//	claims: sub (who), org ("" = admin, all orgs), rw (bool, may write),
-//	        exp/iat (unix seconds, exp REQUIRED — issued tokens are short-lived),
-//	        iss ("priompt-auth")
-//
-// Signature is Ed25519 over "<header>.<claims>" (base64url, no padding). The
-// public keys come from the service's /jwks endpoint; an unknown kid triggers
-// one rate-limited re-fetch, so key rotation needs no server restart.
+// repo). The claims contract is defined once, in the shared proto repo
+// (priomptproto/claims), and imported by both the issuer and this verifier.
+// The public keys come from the service's /jwks endpoint; an unknown kid
+// triggers one rate-limited re-fetch, so key rotation needs no server restart.
 
 import (
 	"crypto/ed25519"
@@ -22,17 +16,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"priomptproto/claims"
 )
 
-// Claims is the payload of a priompt-auth JWT.
-type Claims struct {
-	Sub string `json:"sub"`
-	Org string `json:"org"`
-	RW  bool   `json:"rw"`
-	Exp int64  `json:"exp"`
-	Iat int64  `json:"iat"`
-	Iss string `json:"iss"`
-}
+// Claims is the payload of a priompt-auth JWT — the shared contract.
+type Claims = claims.Claims
 
 // KeySet caches the Ed25519 public keys of a priompt-auth /jwks endpoint.
 type KeySet struct {

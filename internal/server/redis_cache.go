@@ -7,7 +7,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/proto"
 
-	pb "priompt/gen/priompt/v1"
+	pb "priomptproto/gen/priompt/v1"
 )
 
 // redisCache is the L2 cache backed by Redis — the shared cache for multi-node

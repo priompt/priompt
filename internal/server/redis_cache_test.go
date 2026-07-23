@@ -6,7 +6,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 
-	pb "priompt/gen/priompt/v1"
+	pb "priomptproto/gen/priompt/v1"
 )
 
 func TestRedisCache(t *testing.T) {

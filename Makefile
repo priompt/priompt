@@ -1,9 +1,9 @@
 .PHONY: gen build test
 
-gen:        ## generate Go stubs from proto (needs `buf`)
-	buf generate
+gen:        ## regenerate Go stubs in the sibling proto repo (needs `buf`)
+	cd ../proto && buf generate
 
-build: gen  ## build the server binary
+build:      ## build the server binary
 	go build -o priompt ./cmd/priompt
 
 test:

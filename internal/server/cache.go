@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	pb "priompt/gen/priompt/v1"
+	pb "priomptproto/gen/priompt/v1"
 )
 
 // Cache is the L2 (server-side) cache. Two implementations: an in-process map

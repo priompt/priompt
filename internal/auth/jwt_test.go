@@ -83,11 +83,11 @@ func TestInterceptorJWT(t *testing.T) {
 		ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", header))
 		h := func(ctx context.Context, req any) (any, error) {
 			passed = true
-			scope, _ = ctx.Value(scopeKey{}).(string)
+			scope = Scope(ctx)
 			canWrite = RequireWrite(ctx) == nil
 			return nil, nil
 		}
-		Interceptor(map[string]Token{"static": {Org: "legacy"}}, ks)(ctx, nil, &grpc.UnaryServerInfo{}, h)
+		Interceptor(NewStatic(map[string]Token{"static": {Org: "legacy"}}), JWKSProvider{Keys: ks})(ctx, nil, &grpc.UnaryServerInfo{}, h)
 		return
 	}
 

@@ -719,7 +719,8 @@ CLI flags are listed under [the `priompt` command](#the-priompt-command);
 
 ## gRPC API reference
 
-Defined in [proto/priompt/v1/prompt.proto](proto/priompt/v1/prompt.proto):
+Defined in the **proto** repo (`proto/priompt/v1/prompt.proto`) — the single
+source of truth for the contract:
 
 ```proto
 service PromptService {
@@ -780,29 +781,29 @@ Errors are standard gRPC status codes:
 
 ## For developers of Priompt itself
 
-Requirements: **Go 1.25+** and **buf** (<https://buf.build/docs/installation> —
-uses remote plugins, no `protoc` needed).
+Requirements: **Go 1.25+**. To change the API contract you also need **buf**
+(<https://buf.build/docs/installation> — remote plugins, no `protoc` needed).
 
 ```sh
-make build        # buf generate + go build -> ./priompt(.exe)
+make build        # go build -> ./priompt(.exe)
 make test         # go test ./...
+make gen          # regenerate Go stubs in the sibling proto repo (after a .proto change)
 ```
 
-Everything under `gen/` is generated — after editing the `.proto`, run
-`buf generate` and never hand-edit the output. The SDK repos (**python-sdk**,
-**js-sdk**) carry their own copy of the proto; keep them in sync when the
-contract changes.
+The `.proto` contract and its generated Go stubs live in the sibling **proto**
+repo (module `priomptproto`) — the single source of truth for server, CLI, and
+SDKs. After editing it, `buf generate` there, then `buf generate` in
+python-sdk and `npm run sync-proto` in js-sdk.
 
 Project layout:
 
 ```text
-proto/priompt/v1/prompt.proto      The service contract. Source of truth.
-gen/                               Generated Go code (do not edit).
+(module priomptproto, proto repo)  Shared: the service contract + Go stubs, the JWT claims
+                                   contract, the validate rules, and the semdiff engine.
+(module priomptdb, db-adapters)    SQLite/Postgres storage: prompts, commits, refs, migrations.
 
-internal/auth/auth.go              The gatekeeper: static tokens + priompt-auth JWTs, org scoping.
-internal/validate/validate.go      Prompt well-formedness — the one definition of "valid".
-internal/store/store.go            SQLite/Postgres storage: prompts, commits, refs, migrations.
-internal/semdiff/semdiff.go        The semantic propagation diff engine.
+internal/auth/auth.go              The gatekeeper: a pluggable Provider interface (static tokens
+                                   and priompt-auth JWTs ship in core) + org scoping.
 internal/server/server.go          gRPC handlers.
 internal/server/observability.go   Metrics, audit-log, rate-limit interceptors.
 internal/server/cache.go           In-process and Redis L2 caches.

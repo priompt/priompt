@@ -9,9 +9,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	pb "priompt/gen/priompt/v1"
-	"priompt/internal/semdiff"
-	"priompt/internal/store"
+	store "priomptdb"
+	pb "priomptproto/gen/priompt/v1"
+	"priomptproto/semdiff"
 )
 
 // fakeNotifier records published events so the test can assert notify-on-change.

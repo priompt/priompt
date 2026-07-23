@@ -34,13 +34,13 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
-	pb "priompt/gen/priompt/v1"
 	"priompt/internal/auth"
 	"priompt/internal/pubsub"
-	"priompt/internal/semdiff"
 	"priompt/internal/server"
-	"priompt/internal/store"
-	"priompt/internal/validate"
+	store "priomptdb"
+	pb "priomptproto/gen/priompt/v1"
+	"priomptproto/semdiff"
+	"priomptproto/validate"
 )
 
 func main() {
@@ -100,9 +100,12 @@ func serve(args []string) {
 	jwksURL := fs.String("auth-jwks-url", os.Getenv("PRIOMPT_JWKS_URL"), "priompt-auth /jwks URL; accepts its short-lived JWTs alongside static tokens")
 	fs.Parse(args)
 	tokens := loadTokens(*tokensFile)
-	var jwtKeys *auth.KeySet
+	var providers []auth.Provider // none configured = auth disabled (local dev)
+	if len(tokens) > 0 {
+		providers = append(providers, auth.NewStatic(tokens))
+	}
 	if *jwksURL != "" {
-		jwtKeys = auth.NewKeySet(*jwksURL)
+		providers = append(providers, auth.NewJWKS(*jwksURL))
 	}
 	embedKey := os.Getenv("PRIOMPT_EMBED_KEY")
 
@@ -143,9 +146,9 @@ func serve(args []string) {
 
 	audit := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	opts := []grpc.ServerOption{grpc.ChainUnaryInterceptor(
-		server.MetricsInterceptor,                       // outermost: observes every outcome
-		auth.Interceptor(tokens, jwtKeys),               // sets org scope
-		server.AuditInterceptor(audit),                  // logs with scope, sees rate-limit rejections
+		server.MetricsInterceptor,      // outermost: observes every outcome
+		auth.Interceptor(providers...), // sets the caller's identity (org scope, write bit)
+		server.AuditInterceptor(audit), // logs with scope, sees rate-limit rejections
 		server.RateLimitInterceptor(*rateLimit, *rateBurst),
 	)}
 	if *cert != "" && *key != "" {
