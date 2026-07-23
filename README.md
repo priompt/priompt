@@ -58,11 +58,12 @@ Two capabilities are the reason Priompt exists — everything else supports them
 
 ## The Priompt family
 
-This is the **core server** repo. The ecosystem is five small repos:
+This is the **core server** repo. The ecosystem is six small repos:
 
 | Repo | What it is | Who uses it |
 | --- | --- | --- |
 | **priompt** (this one) | The server: stores, versions, validates, serves, and distributes prompts | Whoever runs the infrastructure |
+| **proto** | The shared source of truth: the gRPC contract, JWT claims, validation rules, semantic diff engine | Every other repo (imports, not copies) |
 | **cli** | `promptctl` — authoring tool; prompts as files in git, with validation and semantic diff | Prompt writers |
 | **auth** | `priompt-auth` — token issuer: SSO logins and service accounts become short-lived JWTs | Enterprises needing SSO, rotation, offboarding |
 | **python-sdk** | Python client library | Python agents/apps |
@@ -167,7 +168,7 @@ control); everything after it is a free-form path of any depth —
 prefix you can browse like a folder (`priompt list`); there is no separate repo
 object, and each prompt has its own independent history.
 
-**Validation.** A prompt is valid when ([internal/validate/validate.go](internal/validate/validate.go)):
+**Validation.** A prompt is valid when (`priomptproto/validate`, in the **proto** repo):
 
 1. The URI is non-empty.
 2. The template is non-empty.
@@ -342,7 +343,7 @@ Edit on line 3:  "Be helpful"  ->  "Never help with refunds"
            line 5  ────────────────  meaning unchanged?         they flatten out
 ```
 
-For each changed hunk, three signals ([internal/semdiff/semdiff.go](internal/semdiff/semdiff.go)):
+For each changed hunk, three signals (`priomptproto/semdiff`, in the **proto** repo):
 
 1. **Signal 1 — where.** The changed region (a line-level LCS diff hunk).
 2. **Signal 2 — how big at the point.** Semantic distance between old and new

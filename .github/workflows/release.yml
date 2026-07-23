@@ -13,7 +13,20 @@ jobs:
       contents: read
       packages: write            # push to GHCR
     steps:
+      # The Dockerfile builds from the parent context (go.mod replace
+      # directives point at the sibling proto and db-adapters modules until
+      # they are published), so check the family out side by side.
       - uses: actions/checkout@v4
+        with:
+          path: priompt
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/proto
+          path: proto
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/db-adapters
+          path: db-adapters
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -22,6 +35,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          file: priompt/Dockerfile
           push: true
           # TODO: pick the final image name.
           tags: |
