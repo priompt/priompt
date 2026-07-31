@@ -23,7 +23,9 @@ The system under test — seven repos:
 > shared **proto** repo now holds the gRPC contract, JWT claims, validation
 > rules, and semdiff engine (all previously copied per-repo); the server
 > imports `priomptdb` instead of carrying its own store; and core auth became
-> a pluggable `Provider` interface. The 2026-07-23 re-run below is the proof
+> a pluggable `Provider` interface — since moved wholesale into the **auth**
+> repo as `priomptauth/authn`, leaving core with authorization only. The
+> 2026-07-23 re-run below is the proof
 > the restructure preserved behavior end to end — several content hashes
 > (T1's `22e5cc10ac0f`, T20's `e345dcf74d01`) reproduce the original run
 > exactly. Details in `GAP-ASSESSMENT-2.md` in the family checkout.
@@ -44,9 +46,11 @@ cd ../python-sdk && python -m venv venv && venv/Scripts/pip install -e . pytest
 cd ../js-sdk    && npm install
 ```
 
-The Go repos reference the sibling `proto` and `db-adapters` checkouts via
-`replace` directives (until the modules are published), so clone the family
-side by side — as the `cd ../` steps above already assume.
+The Go repos reference the sibling `proto`, `db-adapters` and `auth` checkouts
+via `replace` directives (until the modules are published), so clone the family
+side by side — as the `cd ../` steps above already assume. The server needs the
+`auth` checkout to *build* (it imports `priomptauth/authn` for all credential
+handling); it does not need the `priompt-auth` service to *run*.
 
 All server tests below use `127.0.0.1:18443` (gRPC), `:18444` (auth), `:14222`
 (NATS), `:12112` (metrics) — any free ports work.

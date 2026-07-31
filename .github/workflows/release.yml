@@ -14,8 +14,8 @@ jobs:
       packages: write            # push to GHCR
     steps:
       # The Dockerfile builds from the parent context (go.mod replace
-      # directives point at the sibling proto and db-adapters modules until
-      # they are published), so check the family out side by side.
+      # directives point at the sibling proto, db-adapters and auth modules
+      # until they are published), so check the family out side by side.
       - uses: actions/checkout@v4
         with:
           path: priompt
@@ -27,6 +27,10 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/db-adapters
           path: db-adapters
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/auth   # priomptauth/authn
+          path: auth
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io

@@ -9,7 +9,7 @@ jobs:
   go:
     runs-on: ubuntu-latest
     steps:
-      # go.mod points at the sibling proto and db-adapters modules with
+      # go.mod points at the sibling proto, db-adapters and auth modules with
       # replace directives until they are published, so the family is checked
       # out side by side — same layout as a local clone.
       - uses: actions/checkout@v4
@@ -23,6 +23,10 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/db-adapters
           path: db-adapters
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/auth   # priomptauth/authn
+          path: auth
       - uses: actions/setup-go@v5
         with:
           go-version-file: priompt/go.mod

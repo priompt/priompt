@@ -13,6 +13,7 @@ services:
       # - ./tls:/tls:ro                 # uncomment to mount TLS material
     environment:
       PRIOMPT_TOKEN: "${PRIOMPT_TOKEN:-}"        # admin bearer token (blank = auth off)
+      PRIOMPT_JWKS_URL: "${PRIOMPT_JWKS_URL:-}"  # priompt-auth /jwks; blank = no JWT auth
       PRIOMPT_EMBED_URL: "${PRIOMPT_EMBED_URL:-}" # blank = offline lexical embedder
       PRIOMPT_EMBED_MODEL: "${PRIOMPT_EMBED_MODEL:-}"
       PRIOMPT_EMBED_KEY: "${PRIOMPT_EMBED_KEY:-}"

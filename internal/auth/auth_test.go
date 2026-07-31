@@ -3,113 +3,69 @@ package auth
 import (
 	"context"
 	"testing"
-	"time"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
+	"priomptauth/authn"
 )
 
-// interceptorFor mirrors the serve wiring: a static provider only when tokens
-// exist, so an empty map means "no providers" (auth disabled).
-func interceptorFor(tokens map[string]Token) grpc.UnaryServerInterceptor {
-	if len(tokens) == 0 {
-		return Interceptor()
-	}
-	return Interceptor(NewStatic(tokens))
-}
-
-// call runs the interceptor and returns whether the handler ran and the scope
-// the interceptor attached (empty if it didn't run or scope was admin/"").
-func call(tokens map[string]Token, header string) (passed bool, scope string) {
-	ctx := context.Background()
-	if header != "" {
-		ctx = metadata.NewIncomingContext(ctx, metadata.Pairs("authorization", header))
-	}
-	h := func(ctx context.Context, req any) (any, error) {
-		passed = true
-		scope = Scope(ctx)
-		return nil, nil
-	}
-	interceptorFor(tokens)(ctx, nil, &grpc.UnaryServerInfo{}, h)
-	return passed, scope
-}
-
-func TestInterceptor(t *testing.T) {
-	two := map[string]Token{"alice": {}, "bob": {Org: "acme"}}
-	if ok, _ := call(two, "Bearer alice"); !ok {
-		t.Error("alice's token should authenticate")
-	}
-	if ok, scope := call(two, "Bearer bob"); !ok || scope != "acme" {
-		t.Errorf("bob's token should authenticate scoped to acme, got ok=%v scope=%q", ok, scope)
-	}
-	if ok, _ := call(two, "Bearer revoked"); ok {
-		t.Error("unknown token must be rejected")
-	}
-	if ok, _ := call(two, ""); ok {
-		t.Error("missing token must be rejected")
-	}
-	if ok, _ := call(map[string]Token{}, ""); !ok {
-		t.Error("empty token set disables auth")
-	}
-
-	// Expiry: a past expiry is rejected, a future one passes.
-	expired := map[string]Token{"old": {Expires: time.Now().Add(-time.Hour)}}
-	if ok, _ := call(expired, "Bearer old"); ok {
-		t.Error("expired token must be rejected")
-	}
-	valid := map[string]Token{"new": {Expires: time.Now().Add(time.Hour)}}
-	if ok, _ := call(valid, "Bearer new"); !ok {
-		t.Error("unexpired token must authenticate")
-	}
-}
-
-// writeAllowed runs the interceptor with the given token and reports whether a
-// mutating RPC (RequireWrite) would be permitted for the resulting context.
-func writeAllowed(tokens map[string]Token, header string) (passed, canWrite bool) {
-	ctx := context.Background()
-	if header != "" {
-		ctx = metadata.NewIncomingContext(ctx, metadata.Pairs("authorization", header))
-	}
-	h := func(ctx context.Context, req any) (any, error) {
-		passed = true
-		canWrite = RequireWrite(ctx) == nil
-		return nil, nil
-	}
-	interceptorFor(tokens)(ctx, nil, &grpc.UnaryServerInfo{}, h)
-	return passed, canWrite
-}
-
-func TestWriteScope(t *testing.T) {
-	tokens := map[string]Token{
-		"reader": {Org: "acme"},              // read-only
-		"author": {Org: "acme", Write: true}, // may write
-		"admin":  {Write: true},
-	}
-	if _, w := writeAllowed(tokens, "Bearer reader"); w {
-		t.Error("read-only token must be denied write")
-	}
-	if ok, w := writeAllowed(tokens, "Bearer author"); !ok || !w {
-		t.Error("rw token must be allowed to write")
-	}
-	if _, w := writeAllowed(tokens, "Bearer admin"); !w {
-		t.Error("admin rw token must be allowed to write")
-	}
-	// Auth disabled (no providers) leaves no identity on the context — full access.
-	if ok, w := writeAllowed(map[string]Token{}, ""); !ok || !w {
-		t.Error("auth-disabled must permit writes")
-	}
+// scoped builds the context the authn interceptor would hand a handler.
+func scoped(org string, write bool) context.Context {
+	return authn.WithIdentity(context.Background(), authn.Identity{Org: org, Write: write})
 }
 
 func TestAuthorize(t *testing.T) {
-	scoped := WithIdentity(context.Background(), Identity{Org: "acme"})
-	if err := Authorize(scoped, "priompt://acme/r/p"); err != nil {
+	acme := scoped("acme", false)
+	if err := Authorize(acme, "priompt://acme/r/p"); err != nil {
 		t.Errorf("acme token on acme prompt should pass: %v", err)
 	}
-	if err := Authorize(scoped, "priompt://other/r/p"); err == nil {
+	if err := Authorize(acme, "priompt://other/r/p"); err == nil {
 		t.Error("acme token on other org's prompt must be denied")
 	}
 	// Empty scope (admin / auth disabled) can touch any org.
 	if err := Authorize(context.Background(), "priompt://anything/r/p"); err != nil {
 		t.Errorf("admin/unscoped should pass: %v", err)
+	}
+	if err := Authorize(scoped("", false), "priompt://anything/r/p"); err != nil {
+		t.Errorf("admin token should pass: %v", err)
+	}
+}
+
+func TestRequireWrite(t *testing.T) {
+	if err := RequireWrite(scoped("acme", false)); err == nil {
+		t.Error("read-only token must be denied write")
+	}
+	if err := RequireWrite(scoped("acme", true)); err != nil {
+		t.Errorf("rw token must be allowed to write: %v", err)
+	}
+	if err := RequireWrite(scoped("", true)); err != nil {
+		t.Errorf("admin rw token must be allowed to write: %v", err)
+	}
+	// No identity on the context = auth disabled = full access.
+	if err := RequireWrite(context.Background()); err != nil {
+		t.Errorf("auth-disabled must permit writes: %v", err)
+	}
+}
+
+func TestScopeOf(t *testing.T) {
+	if got := ScopeOf(scoped("acme", false)); got != "acme" {
+		t.Errorf("commit author should be the org, got %q", got)
+	}
+	// Unscoped admin and auth-disabled both author as "anonymous".
+	if got := ScopeOf(scoped("", true)); got != "anonymous" {
+		t.Errorf("unscoped admin should author as anonymous, got %q", got)
+	}
+	if got := ScopeOf(context.Background()); got != "anonymous" {
+		t.Errorf("auth-disabled should author as anonymous, got %q", got)
+	}
+}
+
+func TestOrgOf(t *testing.T) {
+	for uri, want := range map[string]string{
+		"priompt://acme/support/greeting": "acme",
+		"priompt://acme":                  "acme",
+		"acme/support/greeting":           "acme",
+	} {
+		if got := OrgOf(uri); got != want {
+			t.Errorf("OrgOf(%q) = %q, want %q", uri, got, want)
+		}
 	}
 }

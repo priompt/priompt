@@ -65,7 +65,7 @@ This is the **core server** repo. The ecosystem is six small repos:
 | **priompt** (this one) | The server: stores, versions, validates, serves, and distributes prompts | Whoever runs the infrastructure |
 | **proto** | The shared source of truth: the gRPC contract, JWT claims, validation rules, semantic diff engine | Every other repo (imports, not copies) |
 | **cli** | `promptctl` — authoring tool; prompts as files in git, with validation and semantic diff | Prompt writers |
-| **auth** | `priompt-auth` — token issuer: SSO logins and service accounts become short-lived JWTs | Enterprises needing SSO, rotation, offboarding |
+| **auth** | `priompt-auth` — token issuer: SSO logins and service accounts become short-lived JWTs. Also owns all authentication as the `priomptauth/authn` package this server imports | Enterprises needing SSO, rotation, offboarding |
 | **python-sdk** | Python client library | Python agents/apps |
 | **js-sdk** | JavaScript client library | Node agents/apps |
 | **db-adapters** | The storage engine as a reusable library (SQLite, PostgreSQL) | Tool builders |
@@ -536,6 +536,12 @@ issuer, and static tokens keep working alongside. A JWT carries the same
 permission model (`org` scope, `rw` grant, expiry); SSO group mapping,
 rotation, and offboarding live in the issuer and your IdP.
 
+Both credential paths — the tokens file and the JWTs — are implemented in the
+auth repo's `priomptauth/authn` package, which this server imports. Minting and
+verification live side by side there so the token format cannot drift. What
+stays here is authorization: matching the caller's `org` against the prompt URI
+and gating writes.
+
 **TLS.** Pass `-tls-cert` and `-tls-key` to terminate TLS; on the client set
 `tls=True` (and optionally `ca_cert`). Without these the server listens in
 plaintext.
@@ -802,9 +808,11 @@ Project layout:
 (module priomptproto, proto repo)  Shared: the service contract + Go stubs, the JWT claims
                                    contract, the validate rules, and the semdiff engine.
 (module priomptdb, db-adapters)    SQLite/Postgres storage: prompts, commits, refs, migrations.
+(module priomptauth/authn, auth)   Authentication: the pluggable Provider interface, static
+                                   tokens, JWT minting/verification, JWKS, the gRPC gate.
 
-internal/auth/auth.go              The gatekeeper: a pluggable Provider interface (static tokens
-                                   and priompt-auth JWTs ship in core) + org scoping.
+internal/auth/auth.go              Authorization only: org scoping and the write gate — policy
+                                   about prompt URIs. Authentication is authn's, above.
 internal/server/server.go          gRPC handlers.
 internal/server/observability.go   Metrics, audit-log, rate-limit interceptors.
 internal/server/cache.go           In-process and Redis L2 caches.

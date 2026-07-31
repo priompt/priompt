@@ -1,12 +1,16 @@
 # Build: pure-Go (modernc sqlite), so CGO off → static binary.
 # Build context is the PARENT directory (the family checkout): go.mod points at
-# the sibling `db-adapters` and `proto` modules via replace directives until
-# they are published. `docker compose up --build` handles this; by hand:
+# the sibling `db-adapters`, `proto` and `auth` modules via replace directives
+# until they are published. (`auth` supplies priomptauth/authn, which owns all
+# credential handling — this is a build dependency only; the running server
+# never calls the auth service.) `docker compose up --build` handles this; by
+# hand:
 #   docker build -f priompt/Dockerfile ..
 FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY db-adapters/ db-adapters/
 COPY proto/ proto/
+COPY auth/ auth/
 COPY priompt/ priompt/
 WORKDIR /src/priompt
 RUN go mod download

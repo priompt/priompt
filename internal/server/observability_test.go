@@ -3,12 +3,13 @@ package server
 import (
 	"context"
 
-	"priompt/internal/auth"
 	"testing"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"priomptauth/authn"
 )
 
 func TestRateLimitInterceptor(t *testing.T) {
@@ -17,7 +18,7 @@ func TestRateLimitInterceptor(t *testing.T) {
 
 	// burst=2: first two calls for an org pass, third is rejected.
 	rl := RateLimitInterceptor(1, 2)
-	acme := auth.WithIdentity(context.Background(), auth.Identity{Org: "acme"})
+	acme := authn.WithIdentity(context.Background(), authn.Identity{Org: "acme"})
 	for i := 0; i < 2; i++ {
 		if _, err := rl(acme, nil, info, h); err != nil {
 			t.Fatalf("call %d should pass: %v", i, err)
@@ -27,7 +28,7 @@ func TestRateLimitInterceptor(t *testing.T) {
 		t.Errorf("third call should be rate-limited, got %v", err)
 	}
 	// Separate org has its own bucket.
-	other := auth.WithIdentity(context.Background(), auth.Identity{Org: "other"})
+	other := authn.WithIdentity(context.Background(), authn.Identity{Org: "other"})
 	if _, err := rl(other, nil, info, h); err != nil {
 		t.Errorf("other org should have its own bucket: %v", err)
 	}

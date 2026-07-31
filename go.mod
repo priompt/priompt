@@ -54,9 +54,12 @@ require (
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
+	priomptauth v0.0.0
 	priomptdb v0.0.0
 	priomptproto v0.0.0
 )
+
+replace priomptauth => ../auth
 
 replace priomptdb => ../db-adapters
 

@@ -8,10 +8,8 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -34,9 +32,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
-	"priompt/internal/auth"
 	"priompt/internal/pubsub"
 	"priompt/internal/server"
+	"priomptauth/authn"
 	store "priomptdb"
 	pb "priomptproto/gen/priompt/v1"
 	"priomptproto/semdiff"
@@ -99,13 +97,18 @@ func serve(args []string) {
 	seed := fs.Bool("seed", os.Getenv("PRIOMPT_SEED") != "false", "seed a demo prompt when it is absent (PRIOMPT_SEED=false disables)")
 	jwksURL := fs.String("auth-jwks-url", os.Getenv("PRIOMPT_JWKS_URL"), "priompt-auth /jwks URL; accepts its short-lived JWTs alongside static tokens")
 	fs.Parse(args)
-	tokens := loadTokens(*tokensFile)
-	var providers []auth.Provider // none configured = auth disabled (local dev)
+	// Credentials are the auth repo's job: it parses the tokens file and
+	// verifies its own JWTs. Core only decides which providers to run.
+	tokens, err := authn.LoadTokens(*tokensFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var providers []authn.Provider // none configured = auth disabled (local dev)
 	if len(tokens) > 0 {
-		providers = append(providers, auth.NewStatic(tokens))
+		providers = append(providers, authn.NewStatic(tokens))
 	}
 	if *jwksURL != "" {
-		providers = append(providers, auth.NewJWKS(*jwksURL))
+		providers = append(providers, authn.NewJWKS(*jwksURL))
 	}
 	embedKey := os.Getenv("PRIOMPT_EMBED_KEY")
 
@@ -146,9 +149,9 @@ func serve(args []string) {
 
 	audit := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	opts := []grpc.ServerOption{grpc.ChainUnaryInterceptor(
-		server.MetricsInterceptor,      // outermost: observes every outcome
-		auth.Interceptor(providers...), // sets the caller's identity (org scope, write bit)
-		server.AuditInterceptor(audit), // logs with scope, sees rate-limit rejections
+		server.MetricsInterceptor,       // outermost: observes every outcome
+		authn.Interceptor(providers...), // sets the caller's identity (org scope, write bit)
+		server.AuditInterceptor(audit),  // logs with scope, sees rate-limit rejections
 		server.RateLimitInterceptor(*rateLimit, *rateBurst),
 	)}
 	if *cert != "" && *key != "" {
@@ -246,73 +249,6 @@ func cacheName(redisURL string, ttl time.Duration) string {
 	default:
 		return "off"
 	}
-}
-
-// loadTokens reads bearer tokens, their org scope, an optional expiry, and an
-// optional write grant. PRIOMPT_TOKEN is an admin token (all orgs, never
-// expires, may write). File lines are `token [org] [expiry] [rw]` — org scopes
-// the token to priompt://org/… (blank = admin); expiry is a date (2006-01-02)
-// or RFC3339 timestamp; the keyword `rw` grants write (default is read-only,
-// `ro` is the explicit no-op). Fields after the token are order-independent:
-// `rw`/`ro` is recognized by keyword, a date/timestamp as the expiry, anything
-// else as the org. Blank lines and # comments are ignored. An empty result =
-// auth disabled. To rotate: add the new token, give the old one a near-future
-// expiry, drop it once it lapses.
-func loadTokens(file string) map[string]auth.Token {
-	tokens := map[string]auth.Token{}
-	if t := os.Getenv("PRIOMPT_TOKEN"); t != "" {
-		tokens[t] = auth.Token{Write: true} // admin, never expires
-	}
-	if file != "" {
-		b, err := os.ReadFile(file)
-		if err != nil {
-			log.Fatal(err)
-		}
-		for _, line := range strings.Split(string(b), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			fields := strings.Fields(line)
-			tok := auth.Token{}
-			for _, f := range fields[1:] {
-				switch {
-				case f == "rw":
-					tok.Write = true
-				case f == "ro":
-					// explicit read-only (the default); no-op
-				case isExpiry(f):
-					tok.Expires = parseExpiry(f)
-				default:
-					tok.Org = f
-				}
-			}
-			tokens[fields[0]] = tok
-		}
-	}
-	return tokens
-}
-
-// isExpiry reports whether s parses as a token expiry (date or RFC3339), so the
-// token-line parser can tell an expiry from an org name.
-func isExpiry(s string) bool {
-	if _, err := time.Parse("2006-01-02", s); err == nil {
-		return true
-	}
-	_, err := time.Parse(time.RFC3339, s)
-	return err == nil
-}
-
-// parseExpiry accepts a bare date (2006-01-02) or an RFC3339 timestamp.
-func parseExpiry(s string) time.Time {
-	if t, err := time.Parse("2006-01-02", s); err == nil {
-		return t
-	}
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		log.Fatalf("bad token expiry %q: want 2006-01-02 or RFC3339", s)
-	}
-	return t
 }
 
 // splitHostPort parses host:port; an empty host means all interfaces.
@@ -629,11 +565,11 @@ func migrateCmd(args []string) {
 
 // genToken prints a fresh random bearer token for the tokens file.
 func genToken() {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
+	tok, err := authn.GenToken()
+	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(hex.EncodeToString(b))
+	fmt.Println(tok)
 }
 
 // initCmd is first-run setup (Strapi-style): it mints an admin write token,
@@ -650,11 +586,10 @@ func initCmd(args []string) {
 	if _, err := os.Stat(*tokensFile); err == nil && !*force {
 		log.Fatalf("%s already exists; pass -force to overwrite", *tokensFile)
 	}
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
+	token, err := authn.GenToken()
+	if err != nil {
 		log.Fatal(err)
 	}
-	token := hex.EncodeToString(b)
 	if err := os.WriteFile(*tokensFile, []byte(token+" rw\n"), 0o600); err != nil {
 		log.Fatal(err)
 	}
