@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -61,6 +62,15 @@ func (s *Server) PublishPrompt(ctx context.Context, req *pb.PublishPromptRequest
 		prev, err := s.Store.Get(ctx, req.GetUri())
 		switch {
 		case err == nil && prev.VersionHash == hash:
+			// The store already holds this content, but the cache may not: this
+			// is exactly the shape of a retry after a publish whose invalidation
+			// failed (the write landed, the cache did not clear). Returning
+			// early here would make that retry a no-op and strand every node on
+			// the old version until the TTL expired — so clear the cache before
+			// reporting success, which is what makes the retry self-healing.
+			if err := invalidate(s.Cache, req.GetUri()); err != nil {
+				return nil, err
+			}
 			return &pb.PublishPromptResponse{VersionHash: hash}, nil
 		case err == nil:
 			class = s.classify(prev.Template, req.GetTemplate())
@@ -73,13 +83,16 @@ func (s *Server) PublishPrompt(ctx context.Context, req *pb.PublishPromptRequest
 	// (the prompts table) in the same transaction. Author is the caller's org
 	// scope; message is carried from the request.
 	if _, err := s.Store.Commit(ctx, req.GetUri(), branch, req.GetTemplate(), req.GetSlots(), auth.ScopeOf(ctx), req.GetMessage()); err != nil {
-		return nil, status.Errorf(codes.Internal, "store failed: %v", err)
+		return nil, storeError(ctx, "publish", err)
 	}
 	// Cache and subscribers track the served HEAD only — branch work is invisible
 	// until merged into main.
 	if onMain {
-		if s.Cache != nil {
-			s.Cache.Invalidate(req.GetUri())
+		// A publish that cannot clear the cache has not taken effect for
+		// readers, so fail it rather than report a success that agents will not
+		// see. The version is already durable; the caller retries.
+		if err := invalidate(s.Cache, req.GetUri()); err != nil {
+			return nil, err
 		}
 		if s.Notifier != nil {
 			// Best-effort: the version is durably stored even if the notify fails;
@@ -109,7 +122,7 @@ func (s *Server) GetPrompt(ctx context.Context, req *pb.GetPromptRequest) (*pb.G
 		return nil, status.Errorf(codes.NotFound, "prompt %q not found", uri)
 	}
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "lookup failed: %v", err)
+		return nil, storeError(ctx, "lookup", err)
 	}
 	// Serve-time validation: never hand a malformed prompt to a production agent,
 	// and never cache one (validation before caching).
@@ -133,16 +146,21 @@ func (s *Server) GetPrompt(ctx context.Context, req *pb.GetPromptRequest) (*pb.G
 // prefix's org, so a scoped token can only list within its own org.
 func (s *Server) ListPrompts(ctx context.Context, req *pb.ListPromptsRequest) (*pb.ListPromptsResponse, error) {
 	prefix := req.GetPrefix()
-	if err := auth.Authorize(ctx, prefix); err != nil {
+	if err := auth.AuthorizePrefix(ctx, prefix); err != nil {
 		return nil, err
 	}
 	prompts, err := s.Store.List(ctx, prefix)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list failed: %v", err)
+		return nil, storeError(ctx, "list", err)
 	}
-	entries := make([]*pb.PromptEntry, len(prompts))
-	for i, p := range prompts {
-		entries[i] = &pb.PromptEntry{Uri: p.URI, VersionHash: p.VersionHash}
+	entries := make([]*pb.PromptEntry, 0, len(prompts))
+	for _, p := range prompts {
+		// Belt and braces: the store matches the prefix as a string, so filter
+		// on the parsed org too. A listing must never cross the org boundary.
+		if !auth.InScope(ctx, p.URI) {
+			continue
+		}
+		entries = append(entries, &pb.PromptEntry{Uri: p.URI, VersionHash: p.VersionHash})
 	}
 	return &pb.ListPromptsResponse{Entries: entries}, nil
 }
@@ -158,7 +176,7 @@ func (s *Server) DiffPrompt(ctx context.Context, req *pb.DiffPromptRequest) (*pb
 		return nil, status.Errorf(codes.NotFound, "prompt %q not found", req.GetUri())
 	}
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "lookup failed: %v", err)
+		return nil, storeError(ctx, "lookup", err)
 	}
 	return s.diff(p.Template, req.GetNewTemplate())
 }
@@ -171,11 +189,22 @@ func branchOr(b string) string {
 	return b
 }
 
-func branchErr(err error) error {
-	if errors.Is(err, store.ErrBranchNotFound) {
-		return status.Error(codes.NotFound, "branch not found")
+// invalidate clears one URI from the cache, turning a failure into a retryable
+// status. A nil cache (caching disabled) is a no-op.
+func invalidate(c Cache, uri string) error {
+	if c == nil {
+		return nil
 	}
-	return status.Errorf(codes.Internal, "%v", err)
+	if err := c.Invalidate(uri); err != nil {
+		log.Printf("cache invalidate %s: %v", uri, err)
+		return status.Error(codes.Unavailable,
+			"the change is stored but the cache could not be cleared; retry so readers see it")
+	}
+	return nil
+}
+
+func branchErr(err error) error {
+	return storeError(context.Background(), "branch", err)
 }
 
 func (s *Server) History(ctx context.Context, req *pb.HistoryRequest) (*pb.HistoryResponse, error) {
@@ -228,8 +257,10 @@ func (s *Server) MergeBranch(ctx context.Context, req *pb.MergeBranchRequest) (*
 		return nil, branchErr(err)
 	}
 	// Merging into main moves the served HEAD — invalidate its cache.
-	if s.Cache != nil && branchOr(req.GetInto()) == store.DefaultBranch {
-		s.Cache.Invalidate(req.GetUri())
+	if branchOr(req.GetInto()) == store.DefaultBranch {
+		if err := invalidate(s.Cache, req.GetUri()); err != nil {
+			return nil, err
+		}
 	}
 	return &pb.MergeBranchResponse{CommitHash: hash}, nil
 }
@@ -253,7 +284,7 @@ func diffCommitErr(err error) error {
 	if errors.Is(err, store.ErrNotFound) {
 		return status.Error(codes.NotFound, "commit not found")
 	}
-	return status.Errorf(codes.Internal, "%v", err)
+	return storeError(context.Background(), "diff commits", err)
 }
 
 // getByRef serves a specific version (branch tip or commit) rather than the
@@ -265,7 +296,7 @@ func (s *Server) getByRef(ctx context.Context, uri, ref string) (*pb.GetPromptRe
 		return nil, status.Errorf(codes.NotFound, "ref %q not found for %q", ref, uri)
 	}
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "resolve failed: %v", err)
+		return nil, storeError(ctx, "resolve", err)
 	}
 	if err := validate.Prompt(uri, c.Template, c.Slots); err != nil {
 		return nil, status.Errorf(codes.DataLoss, "stored prompt invalid: %v", err)
@@ -298,11 +329,14 @@ func (s *Server) SetBranch(ctx context.Context, req *pb.SetBranchRequest) (*pb.S
 		return nil, status.Errorf(codes.NotFound, "commit %q not found for %q", req.GetCommitHash(), req.GetUri())
 	}
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "set branch failed: %v", err)
+		return nil, storeError(ctx, "set branch", err)
 	}
 	if branch == store.DefaultBranch {
-		if s.Cache != nil {
-			s.Cache.Invalidate(req.GetUri())
+		// Rollback is the emergency lever — it is pulled because a bad prompt is
+		// live. Silently leaving readers on the cached bad version is the worst
+		// possible outcome, so a failed invalidation fails the rollback.
+		if err := invalidate(s.Cache, req.GetUri()); err != nil {
+			return nil, err
 		}
 		if s.Notifier != nil {
 			_ = s.Notifier.Publish(req.GetUri(), c.VersionHash, s.classify(prevT, c.Template))
@@ -329,7 +363,9 @@ func (s *Server) classify(oldT, newT string) string {
 func (s *Server) diff(oldT, newT string) (*pb.DiffPromptResponse, error) {
 	results, err := semdiff.Analyze(s.Embedder, splitLines(oldT), splitLines(newT))
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "diff failed: %v", err)
+		// The embedding endpoint URL and key can appear in transport errors.
+		log.Printf("diff: %v", err)
+		return nil, status.Error(codes.Internal, "diff failed")
 	}
 	resp := &pb.DiffPromptResponse{Changes: make([]*pb.Change, len(results))}
 	for i, r := range results {

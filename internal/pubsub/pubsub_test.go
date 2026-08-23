@@ -15,7 +15,7 @@ func TestSubject(t *testing.T) {
 }
 
 func TestPublishReceive(t *testing.T) {
-	bus, err := NewEmbedded("127.0.0.1", -1) // -1 => any free port
+	bus, err := NewEmbedded(Config{Host: "127.0.0.1", Port: -1}) // -1 => any free port
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestPublishReceive(t *testing.T) {
 }
 
 func TestSubscriberHelper(t *testing.T) {
-	bus, err := NewEmbedded("127.0.0.1", -1)
+	bus, err := NewEmbedded(Config{Host: "127.0.0.1", Port: -1})
 	if err != nil {
 		t.Fatal(err)
 	}

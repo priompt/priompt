@@ -90,6 +90,9 @@ func serve(args []string) {
 	embedURL := fs.String("embed-url", os.Getenv("PRIOMPT_EMBED_URL"), "OpenAI-compatible /v1/embeddings URL for semantic diff (default: offline lexical embedder)")
 	embedModel := fs.String("embed-model", os.Getenv("PRIOMPT_EMBED_MODEL"), "embedding model name")
 	natsAddr := fs.String("nats-addr", "127.0.0.1:4222", "embedded NATS listen address for pub/sub; empty disables it")
+	natsToken := fs.String("nats-token", os.Getenv("PRIOMPT_NATS_TOKEN"), "token required of NATS subscribers (default: PRIOMPT_NATS_TOKEN; empty = open, loopback only)")
+	natsRoutes := fs.String("nats-routes", os.Getenv("PRIOMPT_NATS_ROUTES"), "comma-separated peer NATS routes to cluster with (multi-node)")
+	natsCluster := fs.String("nats-cluster-addr", os.Getenv("PRIOMPT_NATS_CLUSTER_ADDR"), "listen address for NATS cluster routes (multi-node)")
 	tokensFile := fs.String("tokens-file", "", "file of `token [org] [expiry] [rw]` lines (# comments ok); org scopes the token (blank = admin), rw grants write (default read-only)")
 	metricsAddr := fs.String("metrics-addr", ":2112", "Prometheus /metrics listen address; empty disables it")
 	rateLimit := fs.Float64("rate-limit", 0, "per-org request/sec limit; 0 disables")
@@ -128,7 +131,23 @@ func serve(args []string) {
 	var notifier server.Notifier
 	if *natsAddr != "" {
 		host, port := splitHostPort(*natsAddr)
-		bus, err := pubsub.NewEmbedded(host, port)
+		cfg := pubsub.Config{Host: host, Port: port, Token: *natsToken}
+		// Change events name every prompt that moves and carry the verdict that
+		// agents gate auto-reload on, so an open broker is a disclosure channel
+		// and a forgery channel at once. Binding to a non-loopback address
+		// without a token is refused rather than quietly served.
+		if cfg.Token == "" && !isLoopback(host) {
+			log.Fatalf("-nats-addr %s is not loopback: set -nats-token (or PRIOMPT_NATS_TOKEN) "+
+				"so subscribers must authenticate, or bind NATS to 127.0.0.1", *natsAddr)
+		}
+		if *natsCluster != "" {
+			ch, cp := splitHostPort(*natsCluster)
+			cfg.ClusterName, cfg.ClusterHost, cfg.ClusterPort = "priompt", ch, cp
+		}
+		if *natsRoutes != "" {
+			cfg.Routes = strings.Split(*natsRoutes, ",")
+		}
+		bus, err := pubsub.NewEmbedded(cfg)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -231,7 +250,13 @@ func certPool(pemFile string) (*x509.CertPool, error) {
 // cache (or none when ttl<=0).
 func buildCache(redisURL string, ttl time.Duration) server.Cache {
 	if redisURL != "" {
-		c, err := server.NewRedisCache(redisURL, ttl)
+		// Same key as the database: Redis persists to disk, so an unsealed cache
+		// would leave prompt bodies in cleartext on a second host.
+		sealer, err := store.NewSealer()
+		if err != nil {
+			log.Fatalf("encryption key: %v", err)
+		}
+		c, err := server.NewRedisCache(redisURL, ttl, sealer)
 		if err != nil {
 			log.Fatalf("redis: %v", err)
 		}
@@ -252,6 +277,25 @@ func cacheName(redisURL string, ttl time.Duration) string {
 }
 
 // splitHostPort parses host:port; an empty host means all interfaces.
+// isLoopback reports whether the broker will only be reachable from this host.
+func isLoopback(host string) bool {
+	switch host {
+	case "127.0.0.1", "::1", "localhost":
+		return true
+	case "", "0.0.0.0", "::":
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
 func splitHostPort(addr string) (string, int) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -430,7 +474,7 @@ func publish(args []string) {
 func watch(args []string) {
 	fs := flag.NewFlagSet("watch", flag.ExitOnError)
 	uri := fs.String("uri", "", "prompt uri to watch")
-	natsURL := fs.String("nats-url", "nats://127.0.0.1:4222", "NATS url the server exposes")
+	natsURL := fs.String("nats-url", envOr("PRIOMPT_NATS_URL", "nats://127.0.0.1:4222"), "NATS url the server exposes (nats://token@host:4222 when the broker requires one)")
 	hook := fs.String("exec", "", "command to run on each change (via OS shell); new hash in PRIOMPT_VERSION, diff verdict in PRIOMPT_CLASS")
 	fs.Parse(args)
 	if *uri == "" {
