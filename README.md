@@ -442,8 +442,10 @@ priompt diff       semantic propagation diff (stored vs. an edited file) via a s
 priompt list       browse a repo (URI prefix) like a filesystem, via a server
 priompt publish    publish a new version through a server and notify subscribers
 priompt watch      subscribe to a prompt's change events (NATS)
-priompt backup     dump every prompt as JSON lines
-priompt restore    load prompts from a JSON-lines dump
+priompt backup     full backup: prompts + commit history + branches
+priompt restore    load a full backup (refuses to overwrite history; -force)
+priompt export     served content only, as JSON lines (no history)
+priompt import     load a served-content export
 priompt migrate    apply pending schema migrations and print the version
 priompt gen-token  print a fresh random bearer token
 ```
@@ -685,17 +687,38 @@ the schema, **append** a step; never edit or reorder an existing one.
 
 ### Backup & restore
 
-`backup` dumps every prompt as JSON lines; `restore` upserts them back. The
-format is portable, so it doubles as a SQLite↔Postgres migration path, and the
-upsert makes restore safe to re-run.
+Two pairs, because they do different jobs and conflating them loses history.
 
 ```sh
+# Full backup: served content, the commit history, and every branch pointer.
 priompt backup  -db priompt.db -out snapshot.jsonl
 priompt restore -db postgres://user:pass@host/prompts -in snapshot.jsonl
+
+# Content only: move prompts between servers, seed a staging environment.
+priompt export -db priompt.db  -out prompts.jsonl
+priompt import -db staging.db  -in  prompts.jsonl
 ```
 
-> Backup/restore covers the served HEAD (the `prompts` table), not the full
-> commit history.
+**`backup` / `restore`** carry all three tables — `prompts`, `commits`, `refs` —
+so a restored database has its history, its branches, and the ability to roll
+back. Commit hashes are preserved verbatim: a hash is a commit's identity and
+its children name it as a parent, so recomputing one would break the chain.
+Restore is idempotent, and refuses to write into a database that already holds
+commits unless you pass `-force`.
+
+**`export` / `import`** carry the served HEAD only. That is the right tool for
+copying content between servers and the wrong one for protecting it: a database
+rebuilt from an export serves every prompt correctly and has no history, no
+branches, and no ref for `main` to point at — and nothing looks wrong, because
+the prompts still resolve. Both commands say so when they run.
+
+> This split is the same one Dolt draws between `dump` and `backup`, and
+> Postgres between `pg_dump` and `pg_basebackup` + WAL archiving: a logical
+> export of current state cannot reconstruct history, so it gets its own name.
+
+Files written before backups carried history — bare prompt objects with no
+`kind` tag — are still readable by `restore`, which loads the content and states
+plainly that there was no history in the file to restore.
 
 ## Caching
 
