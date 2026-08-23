@@ -48,13 +48,13 @@ flowchart LR
 Two capabilities are the reason Priompt exists — everything else supports them:
 
 1. **The Semantic Propagation Diff** — a diff that measures *how far an edit's
-   meaning-shift ripples* through a prompt, separating a safe local tweak from a
-   structural rewrite. A text diff cannot tell you this.
+   meaning-shift ripples* through a prompt, separating a contained edit from one
+   that reshapes the whole prompt. A text diff cannot tell you this.
    → [Semantic Propagation Diff](#the-semantic-propagation-diff)
 2. **Change distribution** — prompts are live, versioned resources. The server
    pushes a notification to every subscribed agent the instant one changes,
-   *including the diff verdict*, so agents can auto-reload safe changes and hold
-   risky ones for review. → [When a prompt changes](#when-a-prompt-changes-pubsub)
+   *including the diff verdict*, so an agent can decide what to pick up on its own
+   and what to hold. → [When a prompt changes](#when-a-prompt-changes-pubsub)
 
 ## The Priompt family
 
@@ -292,9 +292,9 @@ sequenceDiagram
     S->>S: invalidate cache
     S->>N: notify subject priompt.acme.support.agent
     N-->>A: "changed! version 1e8284…, verdict: localized tweak"
-    alt verdict is safe (tweak / minor edit)
-        A->>A: hot-reload the new version
-    else verdict is "structural"
+    alt verdict is within the agent's policy
+        A->>A: re-fetch and hot-reload
+    else verdict is structural, or absent
         A->>A: keep the old version, alert a human
     end
 ```
@@ -305,19 +305,41 @@ Each prompt address maps to a NATS subject: `priompt://acme/support/agent` →
 **Notifications carry the diff verdict.** Each event includes the
 [Semantic Propagation Diff](#the-semantic-propagation-diff) classification
 (`structural | localized tweak | minor edit | new`) — the server already
-computed it on publish. That is what makes safe auto-reload possible:
+computed it on publish — so an agent can decide what to do without a second
+round trip:
 
 ```python
 client = PromptClient(host="…:8443", cache_ttl=30, nats_url="nats://…:4222")
 
+# Which verdicts this agent will act on by itself. Everything else waits for a
+# human — including an *empty* verdict, which means the server could not
+# classify the change (a misconfigured embedding endpoint, say) and published
+# anyway. "" does not mean "safe"; it means nobody checked.
+AUTO_RELOAD = {"minor edit", "localized tweak", "new"}
+
 def on_change(version, classification):
-    if classification == "structural":
-        alert_a_human(version)          # reshapes meaning — gate it
+    if classification in AUTO_RELOAD:
+        reload(version)                 # contained change — this agent picks it up
     else:
-        reload(version)                 # safe to pick up automatically
+        alert_a_human(version)          # structural, or unclassified — gate it
 
 client.subscribe("priompt://acme/support/agent", on_change)  # needs `pip install nats-py`
 ```
+
+Where you draw that line is a policy decision, not something the verdict makes
+for you — a `localized tweak` can still be a policy reversal (see
+[the verdict](#the-semantic-propagation-diff)). An agent whose prompt governs
+refunds or safety rules is a reasonable candidate for holding *everything* and
+letting the verdict decide only how loudly to page someone.
+
+Two things worth building in whatever you choose:
+
+- **Re-fetch rather than trusting the payload.** Treat the event as "something
+  changed" and read the new version over the authenticated gRPC channel. The
+  version and classification in a notification are only as trustworthy as the
+  broker they arrived on.
+- **Fail closed on an empty verdict.** It is the one case that looks like a
+  quiet stream of harmless edits while the safety check is simply not running.
 
 The `priompt watch` command prints the verdict too, and exposes it to `-exec`
 hooks as `PRIOMPT_CLASS`.
@@ -398,9 +420,23 @@ The verdict:
 
 | Signal 2 (at the point) | Signal 3 (the ripple) | Verdict |
 | --- | --- | --- |
-| high | flattens quickly | **localized tweak** — safe |
-| low | flat | **minor edit** — safe |
-| any | still high at the boundary | **structural** — the dangerous one, review it |
+| high | flattens quickly | **localized tweak** — the change is contained |
+| low | flat | **minor edit** — little changed anywhere |
+| any | still high at the boundary | **structural** — the change reshapes the prompt |
+
+> **What the verdict does and does not tell you.** It measures *how far a
+> meaning shift spreads*, not how dangerous the change is. Those are different
+> questions, and only the first one is answerable from the text.
+>
+> A one-line edit turning *"offer a refund when reasonable"* into *"never offer a
+> refund"* reads as a **localized tweak** — correctly, because the rest of the
+> prompt still means what it did. It is also a policy reversal you would want a
+> human to see. `structural` says "this rewired the prompt"; it does not say
+> "this is the only kind of change worth reviewing."
+>
+> Treat the verdict as triage — it tells you where to look first — rather than
+> as an approval. What follows from that for agents is in
+> [When a prompt changes](#when-a-prompt-changes-pubsub).
 
 The diff runs **server-side**, against the **stored** prompt, with the embedding
 model the operator configured at startup — analysis is consistent for everyone
