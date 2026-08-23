@@ -353,6 +353,13 @@ func (s *Server) classify(oldT, newT string) string {
 	}
 	res, err := semdiff.Analyze(s.Embedder, splitLines(oldT), splitLines(newT))
 	if err != nil {
+		// A publish is not failed over this — the version is durable and correct,
+		// and the verdict is advisory. But it must not vanish silently: the
+		// documented agent pattern is "auto-reload unless the verdict is
+		// structural", so an empty verdict reads as safe. An operator whose
+		// embedding endpoint is misconfigured would otherwise see every change
+		// auto-reload with no signal and nothing in the log to explain it.
+		log.Printf("classify: semantic verdict unavailable, notifying without one: %v", err)
 		return ""
 	}
 	return semdiff.Worst(res)
