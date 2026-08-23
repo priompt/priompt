@@ -258,6 +258,15 @@ just moving a pointer.
 
 Behavior notes:
 
+- **Concurrent publishes to one prompt are safe.** Advancing a branch is a
+  compare-and-swap against the commit the writer read, the way a Git ref update
+  names the old object id. A writer whose branch moved underneath it gets
+  `ABORTED` and should re-read and retry — nothing is ever reported as published
+  and then silently dropped.
+- **A publish that cannot clear the cache fails.** An invalidation that quietly
+  failed would leave every node serving the previous version while the caller
+  believed the change was live, so the RPC returns `UNAVAILABLE` and the change
+  (already durable) takes effect on retry. The same applies to rollback.
 - **Publishing to a non-`main` branch** records a commit but does not change the
   served HEAD, invalidate the cache, or notify subscribers.
 - **Merging** records a two-parent merge commit. Merge content is taken from the
@@ -316,6 +325,24 @@ hooks as `PRIOMPT_CLASS`.
 **Consistency model.** Push is best-effort (a network blip can drop one); the
 client-side cache TTL is the convergence guarantee. The new version is durably
 stored regardless, and subscribers converge on their next fetch.
+
+**The broker needs a credential.** Change events name the prompt (and therefore
+the org), carry the version hash, and carry the verdict that agents gate
+auto-reload on — so an open broker both discloses every tenant's namespace and
+lets anyone forge an event that agents will act on. Set `-nats-token` (or
+`PRIOMPT_NATS_TOKEN`) whenever NATS is reachable off-loopback; the server
+refuses to bind a non-loopback address without one. Clients pass it in the URL:
+`nats://<token>@host:4222`.
+
+Treat the event as a *hint*, not as data: reload by re-fetching over
+authenticated gRPC rather than trusting the version and classification in the
+payload.
+
+**Multiple nodes need one broker.** Each node embeds its own, so a publish that
+lands on node A is not seen by agents connected to node B — an agent on an
+N-node cluster misses (N-1)/N of all notifications. Either cluster the embedded
+brokers (`-nats-cluster-addr` plus `-nats-routes`) or point every node at one
+external NATS server.
 
 ```sh
 # server: embedded NATS is on by default (-nats-addr "" disables it)
@@ -414,8 +441,10 @@ Selected flags:
   `-auth-jwks-url` (trust priompt-auth JWTs).
 - **`put`** — `-uri`, `-file` (`-` for stdin), `-slot` (repeatable), `-db`,
   `-force`, `-embed-url`, `-embed-model`.
-- **`diff` / `publish`** — `-addr`, `-uri`, `-file`, `-slot`, `-tls`, `-ca-cert`,
-  `-cert`, `-key`.
+- **`publish`** — `-addr`, `-uri`, `-file`, `-slot` (repeatable), `-tls`,
+  `-ca-cert`, `-cert`, `-key`.
+- **`diff`** — `-addr`, `-uri`, `-file`, `-tls`, `-ca-cert`, `-cert`, `-key`.
+  Slots are read from the stored prompt, so there is no `-slot` here.
 - **`list`** — `-addr`, `-prefix` (URI prefix to browse; empty = everything you're
   scoped to), `-tls`, `-ca-cert`, `-cert`, `-key`.
 
@@ -557,7 +586,9 @@ priompt diff  -uri priompt://acme/x -file e.txt -tls \
 ```
 
 **Encryption at rest.** See [Storage](#storage) — one env var encrypts prompt
-content on disk with AES-256-GCM.
+content on disk with AES-256-GCM. The Redis L2 cache is sealed with the same
+key, because it is a second persistent store (it snapshots to disk) and an
+at-rest guarantee that covers only one of two is not a guarantee.
 
 ## Storage
 

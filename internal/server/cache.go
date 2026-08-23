@@ -14,7 +14,11 @@ import (
 type Cache interface {
 	Get(uri string) (*pb.GetPromptResponse, bool)
 	Put(uri string, resp *pb.GetPromptResponse)
-	Invalidate(uri string)
+	// Invalidate drops a URI. It returns an error so a failed invalidation can
+	// fail the write that caused it rather than silently stranding stale
+	// content on every node — a dropped invalidation is a correctness bug, not
+	// a cache miss.
+	Invalidate(uri string) error
 }
 
 // NewMemCache returns the in-process cache, or nil (caching disabled) when ttl
@@ -56,8 +60,10 @@ func (c *ttlCache) Put(uri string, resp *pb.GetPromptResponse) {
 }
 
 // Invalidate drops a URI so the next read reflects a just-published version.
-func (c *ttlCache) Invalidate(uri string) {
+// The in-process cache cannot fail, so this always returns nil.
+func (c *ttlCache) Invalidate(uri string) error {
 	c.mu.Lock()
 	delete(c.m, uri)
 	c.mu.Unlock()
+	return nil
 }

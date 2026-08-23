@@ -5,9 +5,13 @@ services:
       context: ..                      # parent dir: go.mod replaces point at sibling modules
       dockerfile: priompt/Dockerfile
     ports:
-      - "8443:8443"   # gRPC
-      - "2112:2112"   # Prometheus /metrics
-      - "4222:4222"   # NATS pub/sub
+      - "8443:8443"       # gRPC
+      - "127.0.0.1:2112:2112"   # Prometheus /metrics — keep off the public interface
+      # NATS carries every change event (prompt address, version, semantic
+      # verdict) and agents act on the verdict, so publishing this port requires
+      # PRIOMPT_NATS_TOKEN. The server refuses to bind NATS off-loopback without
+      # one. Bound to localhost here; set the token before widening it.
+      - "127.0.0.1:4222:4222"   # NATS pub/sub
     volumes:
       - priompt-data:/data            # SQLite db persists here
       # - ./tls:/tls:ro                 # uncomment to mount TLS material
@@ -18,6 +22,8 @@ services:
       PRIOMPT_EMBED_MODEL: "${PRIOMPT_EMBED_MODEL:-}"
       PRIOMPT_EMBED_KEY: "${PRIOMPT_EMBED_KEY:-}"
       PRIOMPT_REDIS_URL: "${PRIOMPT_REDIS_URL:-}" # blank = in-process cache
+      PRIOMPT_NATS_TOKEN: "${PRIOMPT_NATS_TOKEN:-}" # required once NATS is published off-loopback
+      PRIOMPT_ENCRYPTION_KEY: "${PRIOMPT_ENCRYPTION_KEY:-}" # base64 of 32 bytes; encrypts prompts at rest
     # All serve flags. Drop the ones you don't need.
     command:
       - serve
