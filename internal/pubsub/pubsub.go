@@ -85,7 +85,29 @@ type Config struct {
 	ClusterName string
 	ClusterHost string
 	ClusterPort int
+
+	// RouteSecret authenticates cluster peers. Set it whenever the cluster port
+	// is reachable by anything you do not control: a route peer receives every
+	// message the cluster carries.
+	//
+	// Know what it does and does not do. nats-server authenticates *route
+	// protocol* peers against this secret, but the cluster listener also accepts
+	// ordinary client connections and authenticates those as clients — verified:
+	// a client presenting the client token connects to the cluster port and
+	// receives cluster traffic, while the route secret alone is refused, and the
+	// server counts it as a client, not a route. So this secret gates peers; it
+	// does not turn the cluster port into a private one. Anyone holding a client
+	// credential can use that port as a second client port.
+	//
+	// The practical rule, which is also NATS's own guidance: the cluster port
+	// belongs on a trusted network and must never be internet-facing. Mutual TLS
+	// on the cluster listener (Cluster.TLSConfig with TLSMap) is the only real
+	// peer authentication; username/password is a speed bump.
+	RouteSecret string
 }
+
+// routeUser is the fixed account name for cluster peers. Only the secret varies.
+const routeUser = "priompt-route"
 
 // User is one broker credential and the org it may watch.
 type User struct {
@@ -123,11 +145,25 @@ func (c Config) options() *natsd.Options {
 	if len(c.Routes) > 0 || c.ClusterPort > 0 {
 		o.Cluster = natsd.ClusterOpts{
 			Name: c.ClusterName, Host: c.ClusterHost, Port: c.ClusterPort,
+			Username: routeUser, Password: c.RouteSecret,
+		}
+		if c.RouteSecret == "" {
+			// Leave the credential off entirely rather than configuring an empty
+			// password, which nats-server treats as "no auth required".
+			o.Cluster.Username, o.Cluster.Password = "", ""
 		}
 		for _, r := range c.Routes {
-			if u, err := url.Parse(r); err == nil {
-				o.Routes = append(o.Routes, u)
+			u, err := url.Parse(r)
+			if err != nil {
+				continue
 			}
+			// Peers are given as plain nats://host:port; carry the credential so
+			// the operator states the secret once instead of repeating it into
+			// every route URL (where it would also end up in logs).
+			if u.User == nil && c.RouteSecret != "" {
+				u.User = url.UserPassword(routeUser, c.RouteSecret)
+			}
+			o.Routes = append(o.Routes, u)
 		}
 	}
 	return o

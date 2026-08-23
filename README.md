@@ -341,8 +341,23 @@ payload.
 **Multiple nodes need one broker.** Each node embeds its own, so a publish that
 lands on node A is not seen by agents connected to node B — an agent on an
 N-node cluster misses (N-1)/N of all notifications. Either cluster the embedded
-brokers (`-nats-cluster-addr` plus `-nats-routes`) or point every node at one
-external NATS server.
+brokers or point every node at one external NATS server:
+
+```sh
+# node A
+priompt serve -nats-addr 0.0.0.0:4222 -nats-token $TOK \
+  -nats-cluster-addr 0.0.0.0:6222 -nats-cluster-secret $ROUTE_SECRET \
+  -nats-routes nats://node-b:6222
+# node B: the same, with -nats-routes nats://node-a:6222
+```
+
+> **The cluster port belongs on a trusted network.** `-nats-cluster-secret`
+> authenticates route peers, and the server refuses to bind a non-loopback
+> cluster address without one — but it is necessary, not sufficient: NATS's
+> cluster listener also accepts ordinary *client* connections and authenticates
+> those with the client token, so anyone holding a client credential can use
+> that port as a second client port. Never expose it publicly. Mutual TLS on the
+> cluster listener is the only real peer authentication.
 
 ```sh
 # server: embedded NATS is on by default (-nats-addr "" disables it)

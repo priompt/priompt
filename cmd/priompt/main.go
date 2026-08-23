@@ -93,6 +93,7 @@ func serve(args []string) {
 	natsToken := fs.String("nats-token", os.Getenv("PRIOMPT_NATS_TOKEN"), "token required of NATS subscribers (default: PRIOMPT_NATS_TOKEN; empty = open, loopback only)")
 	natsRoutes := fs.String("nats-routes", os.Getenv("PRIOMPT_NATS_ROUTES"), "comma-separated peer NATS routes to cluster with (multi-node)")
 	natsCluster := fs.String("nats-cluster-addr", os.Getenv("PRIOMPT_NATS_CLUSTER_ADDR"), "listen address for NATS cluster routes (multi-node)")
+	natsClusterSecret := fs.String("nats-cluster-secret", os.Getenv("PRIOMPT_NATS_CLUSTER_SECRET"), "shared secret authenticating NATS cluster peers (required off-loopback)")
 	tokensFile := fs.String("tokens-file", "", "file of `token [org] [expiry] [rw]` lines (# comments ok); org scopes the token (blank = admin), rw grants write (default read-only)")
 	metricsAddr := fs.String("metrics-addr", ":2112", "Prometheus /metrics listen address; empty disables it")
 	rateLimit := fs.Float64("rate-limit", 0, "per-org request/sec limit; 0 disables")
@@ -143,6 +144,20 @@ func serve(args []string) {
 		if *natsCluster != "" {
 			ch, cp := splitHostPort(*natsCluster)
 			cfg.ClusterName, cfg.ClusterHost, cfg.ClusterPort = "priompt", ch, cp
+			cfg.RouteSecret = *natsClusterSecret
+			// A route peer receives everything the cluster carries, so an
+			// unauthenticated cluster port hands the whole event stream to
+			// anyone who can reach it. Refuse to expose it without a secret.
+			//
+			// The secret is necessary, not sufficient: the cluster listener also
+			// serves ordinary client connections, so a client-credential holder
+			// can use it as a second client port. Keep it on a trusted network.
+			if cfg.RouteSecret == "" && !isLoopback(ch) {
+				log.Fatalf("-nats-cluster-addr %s is not loopback: set -nats-cluster-secret "+
+					"(or PRIOMPT_NATS_CLUSTER_SECRET) so cluster peers must authenticate. "+
+					"Keep this port on a trusted network either way — it also accepts client "+
+					"connections", *natsCluster)
+			}
 		}
 		if *natsRoutes != "" {
 			cfg.Routes = strings.Split(*natsRoutes, ",")
