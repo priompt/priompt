@@ -64,6 +64,10 @@ func main() {
 		backup(os.Args[2:])
 	case "restore":
 		restore(os.Args[2:])
+	case "export":
+		export(os.Args[2:])
+	case "import":
+		importCmd(os.Args[2:])
 	case "migrate":
 		migrateCmd(os.Args[2:])
 	case "gen-token":
@@ -74,7 +78,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: priompt init|serve|put|diff|list|publish|watch|backup|restore|migrate|gen-token [flags]")
+	fmt.Fprintln(os.Stderr, "usage: priompt init|serve|put|diff|list|publish|watch|backup|restore|export|import|migrate|gen-token [flags]")
 	os.Exit(2)
 }
 
@@ -534,8 +538,8 @@ func runHook(cmd, uri, hash, class string) {
 
 // backup writes every stored prompt to -out as JSON lines (one prompt per
 // line) — a portable snapshot that restores into either backend.
-func backup(args []string) {
-	fs := flag.NewFlagSet("backup", flag.ExitOnError)
+func export(args []string) {
+	fs := flag.NewFlagSet("export", flag.ExitOnError)
 	dbPath := fs.String("db", "priompt.db", "sqlite file path, or a postgres:// DSN")
 	out := fs.String("out", "-", "output file (- for stdout)")
 	fs.Parse(args)
@@ -565,13 +569,14 @@ func backup(args []string) {
 			log.Fatal(err)
 		}
 	}
-	fmt.Fprintf(os.Stderr, "backed up %d prompts\n", len(prompts))
+	fmt.Fprintf(os.Stderr, "exported %d prompts (served content only — "+
+		"commits and branches are not included; use `priompt backup` for those)\n", len(prompts))
 }
 
-// restore reads JSON-lines prompts from -in and upserts each into the store.
-// Put is an idempotent upsert, so restoring is safe to repeat.
-func restore(args []string) {
-	fs := flag.NewFlagSet("restore", flag.ExitOnError)
+// importCmd reads JSON-lines prompts from -in and upserts each into the store.
+// Put is an idempotent upsert, so importing is safe to repeat.
+func importCmd(args []string) {
+	fs := flag.NewFlagSet("import", flag.ExitOnError)
 	dbPath := fs.String("db", "priompt.db", "sqlite file path, or a postgres:// DSN")
 	in := fs.String("in", "-", "input file (- for stdin)")
 	fs.Parse(args)
@@ -605,7 +610,8 @@ func restore(args []string) {
 		}
 		n++
 	}
-	fmt.Printf("restored %d prompts\n", n)
+	fmt.Printf("imported %d prompts (served content only — history was not "+
+		"part of this file; use `priompt restore` for a full backup)\n", n)
 }
 
 // migrateCmd applies pending schema migrations (Open runs them) and reports the
