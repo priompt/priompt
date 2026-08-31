@@ -235,14 +235,11 @@ func (s *Server) CreateBranch(ctx context.Context, req *pb.CreateBranchRequest) 
 	if req.GetName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "branch name required")
 	}
-	if err := s.Store.Branch(ctx, req.GetUri(), req.GetName(), branchOr(req.GetFrom())); err != nil {
-		return nil, branchErr(err)
-	}
-	c, err := s.Store.Log(ctx, req.GetUri(), req.GetName())
+	hash, err := s.Store.Branch(ctx, req.GetUri(), req.GetName(), branchOr(req.GetFrom()))
 	if err != nil {
 		return nil, branchErr(err)
 	}
-	return &pb.CreateBranchResponse{CommitHash: c[0].Hash}, nil
+	return &pb.CreateBranchResponse{CommitHash: hash}, nil
 }
 
 func (s *Server) MergeBranch(ctx context.Context, req *pb.MergeBranchRequest) (*pb.MergeBranchResponse, error) {
