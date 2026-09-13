@@ -45,7 +45,7 @@ $P -uri priompt://acme/system-prompt -file - -slot date <<'EOF'
 You are a careful assistant. Today is {date}. Answer concisely.
 EOF
 
-$P -uri priompt://beastlife/content/summarize -file - -slot audience -slot thread <<'EOF'
+$P -uri priompt://acme/content/summarize -file - -slot audience -slot thread <<'EOF'
 Summarize this thread for {audience}: {thread}
 EOF
 

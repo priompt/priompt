@@ -28,7 +28,7 @@ The system under test — seven repos:
 > 2026-07-23 re-run below is the proof
 > the restructure preserved behavior end to end — several content hashes
 > (T1's `22e5cc10ac0f`, T20's `e345dcf74d01`) reproduce the original run
-> exactly. Details in `GAP-ASSESSMENT-2.md` in the family checkout.
+> exactly.
 
 Result: **22/22 suites pass** — including the infrastructure suites (Postgres,
 Redis, TLS/mTLS, the Docker image, real TEI embeddings, and SSO against a live
