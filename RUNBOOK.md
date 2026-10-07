@@ -34,7 +34,7 @@ Result: **22/22 suites pass** — including the infrastructure suites (Postgres,
 Redis, TLS/mTLS, the Docker image, real TEI embeddings, and SSO against a live
 Keycloak IdP), all run in Docker. The scorecard is at the
 [bottom](#scorecard); the only thing not exercised is registry publishing
-(Docker/PyPI/npm), which is blocked on name placeholders.
+(Docker/PyPI/npm), which runs from the release workflows on a `v*` tag.
 
 ## Setup
 
@@ -201,7 +201,7 @@ Even the denials from T5 are counted, labeled by gRPC code.
 ## T10 — Python SDK (`get` / `list` / `diff`)
 
 ```python
-from priompt import PromptClient
+from priompt_sdk import PromptClient
 c = PromptClient(host="127.0.0.1:18443")
 c.get("priompt://acme/onboarding/welcome")
 # template='Hi {name}, welcome back to {org}!…' slots=['name','org'] hash=4146f71b692c ✅
@@ -501,7 +501,7 @@ One item remains, deliberately excluded:
 
 | What | Why |
 | --- | --- |
-| Registry publishing (GHCR image push, PyPI, npm) | Blocked on the name placeholders in `release.yml`, `pyproject.toml`, and `package.json` — pick the public names, tag `v*`, and the existing release workflows do the rest |
+| Registry publishing (GHCR image push, PyPI, npm) | Names are set (`priompt-sdk` on PyPI, `priompt-client` on npm, `ghcr.io/<owner>/priompt` image) — tag `v*` (or publish a GitHub Release for PyPI) and the existing release workflows do the rest |
 
 ## Re-running this runbook
 

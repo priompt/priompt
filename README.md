@@ -93,20 +93,19 @@ This is the **core server** repo. The ecosystem is six small repos:
 ## Quick start (Docker, 3 commands)
 
 No clone, no toolchain. The server seeds a demo prompt on first start, so
-fetching works immediately. (Image/dist names are placeholders until the first
-release.)
+fetching works immediately.
 
 ```sh
 # 1. run the server
-docker run -d -p 8443:8443 -p 4222:4222 <registry>/<image>
+docker run -d -p 8443:8443 -p 4222:4222 ghcr.io/priompt/priompt:latest
 
-# 2. install the Python client (imports as `priompt`)
-pip install <dist-name>
+# 2. install the Python client (imports as `priompt_sdk`)
+pip install priompt-sdk
 ```
 
 ```python
 # 3. your code
-from priompt import PromptClient
+from priompt_sdk import PromptClient
 
 client = PromptClient(host="localhost:8443")
 prompt = client.get("priompt://acme/onboarding/welcome")
@@ -135,7 +134,7 @@ PRIOMPT_TOKEN=secret ./priompt serve -addr :8443
 Fetch it from an agent (Python):
 
 ```python
-from priompt import PromptClient
+from priompt_sdk import PromptClient
 
 client = PromptClient(host="localhost:8443", token="secret")
 prompt = client.get("priompt://acme/onboarding/welcome")
@@ -515,11 +514,11 @@ structural change** unless you pass `-force`.
 
 Full docs live in each SDK repo; the short version:
 
-**Python** (repo: **python-sdk**, imports as `priompt`) — covers `get`, `list`,
+**Python** (repo: **python-sdk**, imports as `priompt_sdk`) — covers `get`, `list`,
 `diff`, `subscribe`:
 
 ```python
-from priompt import PromptClient
+from priompt_sdk import PromptClient
 
 client = PromptClient(host="localhost:8443", token="secret")
 prompt = client.get("priompt://acme/onboarding/welcome")

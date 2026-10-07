@@ -1,5 +1,5 @@
 # Publishes on a v* tag only — merging this file uploads nothing.
-# Before the first real release: set the final image name (see TODO below).
+# Pushes the server image to GHCR as ghcr.io/<owner>/priompt.
 name: release
 
 on:
@@ -41,7 +41,6 @@ jobs:
           context: .
           file: priompt/Dockerfile
           push: true
-          # TODO: pick the final image name.
           tags: |
             ghcr.io/${{ github.repository }}:${{ github.ref_name }}
             ghcr.io/${{ github.repository }}:latest
