@@ -15,7 +15,7 @@ import (
 	natsd "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 
-	"priomptproto/validate"
+	"github.com/priompt/proto/validate"
 )
 
 // Event is a version-change notification. Classification is the semantic diff

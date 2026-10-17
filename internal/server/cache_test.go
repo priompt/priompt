@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	pb "priomptproto/gen/priompt/v1"
+	pb "github.com/priompt/proto/gen/priompt/v1"
 )
 
 func TestMemCache(t *testing.T) {

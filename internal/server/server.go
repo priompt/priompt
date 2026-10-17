@@ -10,11 +10,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"priompt/internal/auth"
-	store "priomptdb"
-	pb "priomptproto/gen/priompt/v1"
-	"priomptproto/semdiff"
-	"priomptproto/validate"
+	store "github.com/priompt/db-adapters"
+	"github.com/priompt/priompt/internal/auth"
+	pb "github.com/priompt/proto/gen/priompt/v1"
+	"github.com/priompt/proto/semdiff"
+	"github.com/priompt/proto/validate"
 )
 
 // Notifier publishes version-change events with the change's semantic diff

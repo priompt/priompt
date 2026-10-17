@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/priompt/priompt/internal/auth"
 	"net/http"
-	"priompt/internal/auth"
 	"runtime"
 	"sync"
 	"time"

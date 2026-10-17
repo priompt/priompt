@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"priomptauth/authn"
+	"github.com/priompt/auth/authn"
 )
 
 // scoped builds the context the authn interceptor would hand a handler.

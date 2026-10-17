@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	store "priomptdb"
+	store "github.com/priompt/db-adapters"
 )
 
 // storeError translates a store failure into a canonical gRPC status.

@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	store "priomptdb"
+	store "github.com/priompt/db-adapters"
 )
 
 // A backup carries the whole store: the served HEAD *and* the history behind it.

@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"priomptauth/authn"
+	"github.com/priompt/auth/authn"
 )
 
 func TestRateLimitInterceptor(t *testing.T) {
