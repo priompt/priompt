@@ -183,6 +183,7 @@ func serve(args []string) {
 	}
 
 	if *metricsAddr != "" {
+		server.SetBuildInfo(version, commit)
 		go func() {
 			mux := http.NewServeMux()
 			mux.Handle("/metrics", server.MetricsHandler())
