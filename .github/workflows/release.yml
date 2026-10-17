@@ -18,24 +18,7 @@ jobs:
       contents: read
       packages: write            # push to GHCR
     steps:
-      # The Dockerfile builds from the parent context (go.mod replace
-      # directives point at the sibling proto, db-adapters and auth modules
-      # until they are published), so check the family out side by side.
       - uses: actions/checkout@v4
-        with:
-          path: priompt
-      - uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository_owner }}/proto
-          path: proto
-      - uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository_owner }}/db-adapters
-          path: db-adapters
-      - uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository_owner }}/auth   # priomptauth/authn
-          path: auth
       # QEMU only runs the arm64 runtime stage (apk add); Go cross-compiles natively.
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -47,7 +30,6 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: priompt/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |

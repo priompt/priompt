@@ -1,11 +1,7 @@
 # Build: pure-Go (modernc sqlite), so CGO off → static binary.
-# Build context is the PARENT directory (the family checkout): go.mod points at
-# the sibling `db-adapters`, `proto` and `auth` modules via replace directives
-# until they are published. (`auth` supplies priomptauth/authn, which owns all
-# credential handling — this is a build dependency only; the running server
-# never calls the auth service.) `docker compose up --build` handles this; by
-# hand:
-#   docker build -f priompt/Dockerfile ..
+# Build context is this repo; the sibling modules (proto, db-adapters, auth)
+# come from the Go module proxy at the versions pinned in go.mod.
+#   docker build -t priompt .
 # Multi-arch: the Go stage runs natively on the build host and cross-compiles
 # (no QEMU for the compile); only the tiny runtime stage is per-platform.
 FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
@@ -13,12 +9,9 @@ ARG TARGETOS TARGETARCH
 ARG VERSION=dev
 ARG COMMIT=unknown
 WORKDIR /src
-COPY db-adapters/ db-adapters/
-COPY proto/ proto/
-COPY auth/ auth/
-COPY priompt/ priompt/
-WORKDIR /src/priompt
+COPY go.mod go.sum ./
 RUN go mod download
+COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
       -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
       -o /priompt ./cmd/priompt

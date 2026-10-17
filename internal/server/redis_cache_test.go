@@ -3,14 +3,14 @@ package server
 import (
 	"bytes"
 	"encoding/base64"
-	store "priomptdb"
+	store "github.com/priompt/db-adapters"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 
-	pb "priomptproto/gen/priompt/v1"
+	pb "github.com/priompt/proto/gen/priompt/v1"
 )
 
 func TestRedisCache(t *testing.T) {

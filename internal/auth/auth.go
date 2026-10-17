@@ -2,7 +2,7 @@
 // read/write grant.
 //
 // Authentication — turning a bearer credential into an identity — is not here.
-// It belongs to the auth repo (priomptauth/authn), which owns the token
+// It belongs to the auth repo (github.com/priompt/auth/authn), which owns the token
 // formats, the JWKS, the static tokens file, and the gRPC interceptor that runs
 // them. What stays in core is the half that needs to know what a prompt URI
 // means: a token scoped to org "acme" may only touch priompt://acme/…, and a
@@ -17,8 +17,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"priomptauth/authn"
-	"priomptproto/validate"
+	"github.com/priompt/auth/authn"
+	"github.com/priompt/proto/validate"
 )
 
 // RequireWrite gates mutating RPCs on the caller's write capability. No

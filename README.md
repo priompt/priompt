@@ -65,7 +65,7 @@ This is the **core server** repo. The ecosystem is six small repos:
 | **priompt** (this one) | The server: stores, versions, validates, serves, and distributes prompts | Whoever runs the infrastructure |
 | **proto** | The shared source of truth: the gRPC contract, JWT claims, validation rules, semantic diff engine | Every other repo (imports, not copies) |
 | **cli** | `promptctl` — authoring tool; prompts as files in git, with validation and semantic diff | Prompt writers |
-| **auth** | `priompt-auth` — token issuer: SSO logins and service accounts become short-lived JWTs. Also owns all authentication as the `priomptauth/authn` package this server imports | Enterprises needing SSO, rotation, offboarding |
+| **auth** | `priompt-auth` — token issuer: SSO logins and service accounts become short-lived JWTs. Also owns all authentication as the `github.com/priompt/auth/authn` package this server imports | Enterprises needing SSO, rotation, offboarding |
 | **python-sdk** | Python client library | Python agents/apps |
 | **js-sdk** | JavaScript client library | Node agents/apps |
 | **db-adapters** | The storage engine as a reusable library (SQLite, PostgreSQL) | Tool builders |
@@ -98,6 +98,7 @@ fetching works immediately.
 ```sh
 # 1. run the server
 docker run -d -p 8443:8443 -p 4222:4222 ghcr.io/priompt/priompt:latest
+#    (or, with Go 1.25+: go install github.com/priompt/priompt/cmd/priompt@latest && priompt serve)
 
 # 2. install the Python client (imports as `priompt_sdk`)
 pip install priompt-sdk
@@ -167,7 +168,7 @@ control); everything after it is a free-form path of any depth —
 prefix you can browse like a folder (`priompt list`); there is no separate repo
 object, and each prompt has its own independent history.
 
-**Validation.** A prompt is valid when (`priomptproto/validate`, in the **proto** repo):
+**Validation.** A prompt is valid when (`github.com/priompt/proto/validate`, in the **proto** repo):
 
 1. The URI is non-empty.
 2. The template is non-empty.
@@ -406,7 +407,7 @@ Edit on line 3:  "Be helpful"  ->  "Never help with refunds"
            line 5  ────────────────  meaning unchanged?         they flatten out
 ```
 
-For each changed hunk, three signals (`priomptproto/semdiff`, in the **proto** repo):
+For each changed hunk, three signals (`github.com/priompt/proto/semdiff`, in the **proto** repo):
 
 1. **Signal 1 — where.** The changed region (a line-level LCS diff hunk).
 2. **Signal 2 — how big at the point.** Semantic distance between old and new
@@ -619,7 +620,7 @@ permission model (`org` scope, `rw` grant, expiry); SSO group mapping,
 rotation, and offboarding live in the issuer and your IdP.
 
 Both credential paths — the tokens file and the JWTs — are implemented in the
-auth repo's `priomptauth/authn` package, which this server imports. Minting and
+auth repo's `github.com/priompt/auth/authn` package, which this server imports. Minting and
 verification live side by side there so the token format cannot drift. What
 stays here is authorization: matching the caller's `org` against the prompt URI
 and gating writes.
@@ -903,17 +904,17 @@ make gen          # regenerate Go stubs in the sibling proto repo (after a .prot
 ```
 
 The `.proto` contract and its generated Go stubs live in the sibling **proto**
-repo (module `priomptproto`) — the single source of truth for server, CLI, and
+repo (module `github.com/priompt/proto`) — the single source of truth for server, CLI, and
 SDKs. After editing it, `buf generate` there, then `buf generate` in
 python-sdk and `npm run sync-proto` in js-sdk.
 
 Project layout:
 
 ```text
-(module priomptproto, proto repo)  Shared: the service contract + Go stubs, the JWT claims
+github.com/priompt/proto           Shared: the service contract + Go stubs, the JWT claims
                                    contract, the validate rules, and the semdiff engine.
-(module priomptdb, db-adapters)    SQLite/Postgres storage: prompts, commits, refs, migrations.
-(module priomptauth/authn, auth)   Authentication: the pluggable Provider interface, static
+github.com/priompt/db-adapters     SQLite/Postgres storage: prompts, commits, refs, migrations.
+github.com/priompt/auth/authn      Authentication: the pluggable Provider interface, static
                                    tokens, JWT minting/verification, JWKS, the gRPC gate.
 
 internal/auth/auth.go              Authorization only: org scoping and the write gate — policy

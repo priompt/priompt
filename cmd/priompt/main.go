@@ -32,13 +32,13 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
-	"priompt/internal/pubsub"
-	"priompt/internal/server"
-	"priomptauth/authn"
-	store "priomptdb"
-	pb "priomptproto/gen/priompt/v1"
-	"priomptproto/semdiff"
-	"priomptproto/validate"
+	"github.com/priompt/auth/authn"
+	store "github.com/priompt/db-adapters"
+	"github.com/priompt/priompt/internal/pubsub"
+	"github.com/priompt/priompt/internal/server"
+	pb "github.com/priompt/proto/gen/priompt/v1"
+	"github.com/priompt/proto/semdiff"
+	"github.com/priompt/proto/validate"
 )
 
 // Stamped at build time: go build -ldflags "-X main.version=v0.7.0 -X main.commit=abc123"

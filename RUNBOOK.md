@@ -12,19 +12,19 @@ The system under test — seven repos:
 | Repo | Ships | Role in this runbook |
 | --- | --- | --- |
 | **priompt** | `priompt` server binary | The system under test everywhere |
-| **proto** | Go module `priomptproto` | The shared contract + engines under every suite; T16 — its own test suite |
+| **proto** | Go module `github.com/priompt/proto` | The shared contract + engines under every suite; T16 — its own test suite |
 | **auth** | `priompt-auth` binary | T13 — enterprise token issuance |
 | **cli** | `promptctl` binary | T14 — authoring workflow |
 | **python-sdk** | pip package `priompt` | T10, T11, T15 — client + versioning API + load |
 | **js-sdk** | npm `priompt-client` | T12 — Node client |
-| **db-adapters** | Go module `priomptdb` | T16 — its own test suite |
+| **db-adapters** | Go module `github.com/priompt/db-adapters` | T16 — its own test suite |
 
 > **Restructure note.** Between the two runs the family was restructured: the
 > shared **proto** repo now holds the gRPC contract, JWT claims, validation
 > rules, and semdiff engine (all previously copied per-repo); the server
-> imports `priomptdb` instead of carrying its own store; and core auth became
+> imports `github.com/priompt/db-adapters` instead of carrying its own store; and core auth became
 > a pluggable `Provider` interface — since moved wholesale into the **auth**
-> repo as `priomptauth/authn`, leaving core with authorization only. The
+> repo as `github.com/priompt/auth/authn`, leaving core with authorization only. The
 > 2026-07-23 re-run below is the proof
 > the restructure preserved behavior end to end — several content hashes
 > (T1's `22e5cc10ac0f`, T20's `e345dcf74d01`) reproduce the original run
@@ -40,17 +40,18 @@ Keycloak IdP), all run in Docker. The scorecard is at the
 
 ```sh
 cd priompt      && go build -o priompt.exe ./cmd/priompt
-cd ../auth      && go build -o priompt-auth.exe .
-cd ../cli       && go build -o promptctl.exe .
+cd ../auth      && go build -o priompt-auth.exe ./cmd/priompt-auth
+cd ../cli       && go build -o promptctl.exe ./cmd/promptctl
 cd ../python-sdk && python -m venv venv && venv/Scripts/pip install -e . pytest
 cd ../js-sdk    && npm install
 ```
 
-The Go repos reference the sibling `proto`, `db-adapters` and `auth` checkouts
-via `replace` directives (until the modules are published), so clone the family
-side by side — as the `cd ../` steps above already assume. The server needs the
-`auth` checkout to *build* (it imports `priomptauth/authn` for all credential
-handling); it does not need the `priompt-auth` service to *run*.
+The Go repos require the published `proto`, `db-adapters` and `auth` modules
+(`github.com/priompt/...`, tagged versions), so each builds on its own. To test
+unreleased changes across repos, clone them side by side and add a workspace:
+`go work init ./priompt ./proto ./db-adapters ./auth ./cli` in the parent
+directory. The server imports `github.com/priompt/auth/authn` for all credential
+handling; it does not need the `priompt-auth` service to *run*.
 
 All server tests below use `127.0.0.1:18443` (gRPC), `:18444` (auth), `:14222`
 (NATS), `:12112` (metrics) — any free ports work.

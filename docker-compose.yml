@@ -1,9 +1,7 @@
 # One file, all config. Edit env + flags, then `docker compose up`.
 services:
   priompt:
-    build:
-      context: ..                      # parent dir: go.mod replaces point at sibling modules
-      dockerfile: priompt/Dockerfile
+    build: .
     ports:
       - "8443:8443"       # gRPC
       - "127.0.0.1:2112:2112"   # Prometheus /metrics — keep off the public interface
