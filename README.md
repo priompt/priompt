@@ -483,6 +483,7 @@ priompt export     served content only, as JSON lines (no history)
 priompt import     load a served-content export
 priompt migrate    apply pending schema migrations and print the version
 priompt gen-token  print a fresh random bearer token
+priompt version    print the build version and commit
 ```
 
 Selected flags:
