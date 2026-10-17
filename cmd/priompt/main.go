@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -46,6 +47,27 @@ var (
 	version = "dev"
 	commit  = "unknown"
 )
+
+func init() {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		version, commit = fromBuildInfo(bi, version, commit)
+	}
+}
+
+// fromBuildInfo fills whatever -ldflags left unset from what the Go toolchain
+// records: the module version for `go install …@v0.7.1`, the git revision for
+// `go build` inside a checkout.
+func fromBuildInfo(bi *debug.BuildInfo, version, commit string) (string, string) {
+	if v := bi.Main.Version; version == "dev" && v != "" && v != "(devel)" {
+		version = v
+	}
+	for _, s := range bi.Settings {
+		if s.Key == "vcs.revision" && commit == "unknown" {
+			commit = s.Value
+		}
+	}
+	return version, commit
+}
 
 func main() {
 	if len(os.Args) < 2 {
