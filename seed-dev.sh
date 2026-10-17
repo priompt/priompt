@@ -4,7 +4,13 @@
 # the UI's history/diff views read. Usage: sh seed-dev.sh [addr]
 set -e
 ADDR=${1:-localhost:8443}
-P="./priompt.exe publish -addr $ADDR"
+# The binary next to this script (priompt or priompt.exe), else the one on PATH.
+DIR=$(dirname "$0")
+if   [ -x "$DIR/priompt" ];     then BIN="$DIR/priompt"
+elif [ -x "$DIR/priompt.exe" ]; then BIN="$DIR/priompt.exe"
+else BIN=priompt
+fi
+P="$BIN publish -addr $ADDR"
 
 $P -uri priompt://acme/onboarding/welcome -file - -slot name -slot org <<'EOF'
 Hi {name}, welcome to {org}! Your workspace is ready.
