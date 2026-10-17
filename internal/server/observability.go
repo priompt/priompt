@@ -6,6 +6,7 @@ import (
 
 	"net/http"
 	"priompt/internal/auth"
+	"runtime"
 	"sync"
 	"time"
 
@@ -28,7 +29,16 @@ var (
 		Help:    "gRPC request latency by method.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"method"})
+	buildInfo = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "priompt_build_info",
+		Help: "Always 1; labels identify the running build.",
+	}, []string{"version", "commit", "goversion"})
 )
+
+// SetBuildInfo publishes priompt_build_info{version,commit,goversion} = 1.
+func SetBuildInfo(version, commit string) {
+	buildInfo.WithLabelValues(version, commit, runtime.Version()).Set(1)
+}
 
 // MetricsHandler serves the Prometheus exposition endpoint (mount at /metrics).
 // Point a Prometheus scrape at it; Grafana reads from Prometheus.

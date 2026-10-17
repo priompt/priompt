@@ -41,6 +41,12 @@ import (
 	"priomptproto/validate"
 )
 
+// Stamped at build time: go build -ldflags "-X main.version=v0.7.0 -X main.commit=abc123"
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -72,13 +78,15 @@ func main() {
 		migrateCmd(os.Args[2:])
 	case "gen-token":
 		genToken()
+	case "version", "-version", "--version":
+		fmt.Printf("priompt %s (commit %s, %s)\n", version, commit, runtime.Version())
 	default:
 		usage()
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: priompt init|serve|put|diff|list|publish|watch|backup|restore|export|import|migrate|gen-token [flags]")
+	fmt.Fprintln(os.Stderr, "usage: priompt init|serve|put|diff|list|publish|watch|backup|restore|export|import|migrate|gen-token|version [flags]")
 	os.Exit(2)
 }
 
@@ -175,6 +183,7 @@ func serve(args []string) {
 	}
 
 	if *metricsAddr != "" {
+		server.SetBuildInfo(version, commit)
 		go func() {
 			mux := http.NewServeMux()
 			mux.Handle("/metrics", server.MetricsHandler())
@@ -208,8 +217,8 @@ func serve(args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("priompt serving on %s (tls=%v mtls=%v auth=%d-token cache=%s embed=%s nats=%s metrics=%s ratelimit=%g/s)",
-		*addr, *cert != "", *clientCA != "", len(tokens), cacheName(*redisURL, *cacheTTL), embedName(*embedURL, *embedModel), *natsAddr, *metricsAddr, *rateLimit)
+	log.Printf("priompt %s (%s) serving on %s (tls=%v mtls=%v auth=%d-token cache=%s embed=%s nats=%s metrics=%s ratelimit=%g/s)",
+		version, commit, *addr, *cert != "", *clientCA != "", len(tokens), cacheName(*redisURL, *cacheTTL), embedName(*embedURL, *embedModel), *natsAddr, *metricsAddr, *rateLimit)
 	if err := gs.Serve(lis); err != nil {
 		log.Fatal(err)
 	}

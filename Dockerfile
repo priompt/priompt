@@ -6,7 +6,12 @@
 # never calls the auth service.) `docker compose up --build` handles this; by
 # hand:
 #   docker build -f priompt/Dockerfile ..
-FROM golang:1.25-alpine AS build
+# Multi-arch: the Go stage runs natively on the build host and cross-compiles
+# (no QEMU for the compile); only the tiny runtime stage is per-platform.
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
+ARG TARGETOS TARGETARCH
+ARG VERSION=dev
+ARG COMMIT=unknown
 WORKDIR /src
 COPY db-adapters/ db-adapters/
 COPY proto/ proto/
@@ -14,7 +19,9 @@ COPY auth/ auth/
 COPY priompt/ priompt/
 WORKDIR /src/priompt
 RUN go mod download
-RUN CGO_ENABLED=0 go build -o /priompt ./cmd/priompt
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
+      -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
+      -o /priompt ./cmd/priompt
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates           # for outbound TLS (embed API, redis)
