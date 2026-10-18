@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -627,7 +628,15 @@ func importCmd(args []string) {
 	}
 	defer st.Close()
 
-	dec := json.NewDecoder(r)
+	// A file saved from PowerShell 5.1 may start with a BOM: skip a UTF-8 one,
+	// refuse UTF-16, which the JSON decoder would reject with a cryptic error.
+	br := bufio.NewReader(r)
+	if head, _ := br.Peek(3); string(head) == utf8BOM {
+		br.Discard(3)
+	} else if _, err := normalizeTemplate(string(head)); err != nil {
+		log.Fatalf("%s: %v", *in, err)
+	}
+	dec := json.NewDecoder(br)
 	n := 0
 	for {
 		var p store.Prompt
@@ -635,6 +644,10 @@ func importCmd(args []string) {
 			break
 		} else if err != nil {
 			log.Fatal(err)
+		}
+		var err error
+		if p.Template, err = normalizeTemplate(p.Template); err != nil {
+			log.Fatalf("%s: %v", p.URI, err)
 		}
 		if err := st.Put(context.Background(), p); err != nil {
 			log.Fatal(err)
@@ -802,7 +815,26 @@ func readTemplate(file string) string {
 	if err != nil {
 		log.Fatal(err)
 	}
-	return string(b)
+	t, err := normalizeTemplate(string(b))
+	if err != nil {
+		log.Fatalf("%s: %v", file, err)
+	}
+	return t
+}
+
+const utf8BOM = "\xEF\xBB\xBF"
+
+// normalizeTemplate turns what Windows editors and PowerShell 5.1 commonly write
+// into the plain UTF-8, LF text templates are stored as: a leading UTF-8 BOM
+// (`Out-File -Encoding utf8`) is dropped and CRLF becomes LF. UTF-16 (the
+// default of PowerShell 5.1's `>`) is refused with a clear message rather than
+// failing later as a malformed placeholder or an invalid-UTF-8 RPC error.
+func normalizeTemplate(t string) (string, error) {
+	if strings.HasPrefix(t, "\xFF\xFE") || strings.HasPrefix(t, "\xFE\xFF") || strings.IndexByte(t, 0) >= 0 {
+		return "", errors.New("file is UTF-16; save as UTF-8")
+	}
+	t = strings.TrimPrefix(t, utf8BOM)
+	return strings.ReplaceAll(t, "\r\n", "\n"), nil
 }
 
 type multiFlag []string
