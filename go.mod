@@ -37,9 +37,9 @@ require (
 	github.com/nats-io/nkeys v0.4.16 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/priompt/auth v0.7.0
-	github.com/priompt/db-adapters v0.7.0
-	github.com/priompt/proto v0.7.0
+	github.com/priompt/auth v0.7.1
+	github.com/priompt/db-adapters v0.7.1
+	github.com/priompt/proto v0.7.1
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
