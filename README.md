@@ -473,7 +473,7 @@ One binary, two jobs: run the server, and operate it.
 ```text
 priompt init       first-run setup: mint an admin token + print a PRIOMPT_URL
 priompt serve      run the gRPC server
-priompt put        validate and store a prompt in a local database
+priompt put        validate and commit a prompt to main in a local database
 priompt diff       semantic propagation diff (stored vs. an edited file) via a server
 priompt list       browse a repo (URI prefix) like a filesystem, via a server
 priompt publish    publish a new version through a server and notify subscribers
@@ -481,7 +481,7 @@ priompt watch      subscribe to a prompt's change events (NATS)
 priompt backup     full backup: prompts + commit history + branches
 priompt restore    load a full backup (refuses to overwrite history; -force)
 priompt export     served content only, as JSON lines (no history)
-priompt import     load a served-content export
+priompt import     validate and commit a served-content export to main
 priompt migrate    apply pending schema migrations and print the version
 priompt gen-token  print a fresh random bearer token
 priompt version    print the build version and commit
@@ -710,7 +710,8 @@ priompt serve -db priompt.db
   dedup, idempotency, and cache keys are unaffected.
 - **No migration to enable** — encrypted values carry a marker; rows written
   before the key stay readable, new writes are encrypted. (Rotation and bulk
-  re-encryption are not automated — re-`put` to re-encrypt.)
+  re-encryption are not automated: existing rows and commits keep the key they
+  were written with.)
 - Every process touching the same database — `serve`, `put`, `backup` — must
   share the key. **Lose the key and encrypted rows are unrecoverable.**
 
@@ -745,9 +746,11 @@ commits unless you pass `-force`.
 
 **`export` / `import`** carry the served HEAD only. That is the right tool for
 copying content between servers and the wrong one for protecting it: a database
-rebuilt from an export serves every prompt correctly and has no history, no
-branches, and no ref for `main` to point at — and nothing looks wrong, because
-the prompts still resolve. Both commands say so when they run.
+rebuilt from an export serves every prompt correctly, but each prompt's history
+starts at a single `import` commit on `main`: earlier versions and other
+branches are gone — and nothing looks wrong, because the prompts still resolve.
+Both commands say so when they run. `import` validates the whole file before it
+writes anything, and skips prompts whose `main` already holds that content.
 
 > This split is the same one Dolt draws between `dump` and `backup`, and
 > Postgres between `pg_dump` and `pg_basebackup` + WAL archiving: a logical
