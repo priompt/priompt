@@ -1,7 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
 
 	"testing"
 
@@ -39,5 +42,41 @@ func TestRateLimitInterceptor(t *testing.T) {
 		if _, err := off(acme, nil, info, h); err != nil {
 			t.Fatalf("disabled limiter must always pass: %v", err)
 		}
+	}
+}
+
+// The audit line names the JWT subject when there is one, and omits the key
+// for callers without one (static tokens, auth disabled).
+func TestAuditInterceptorLogsSubject(t *testing.T) {
+	h := func(context.Context, any) (any, error) { return nil, nil }
+	info := &grpc.UnaryServerInfo{FullMethod: "/priompt.v1.PromptService/PublishPrompt"}
+	cases := []struct {
+		name    string
+		id      *authn.Identity
+		wantSub any // nil = key absent
+	}{
+		{"jwt", &authn.Identity{Org: "acme", Sub: "ci-bot", Write: true}, "ci-bot"},
+		{"static token", &authn.Identity{Org: "acme", Write: true}, nil},
+		{"auth disabled", nil, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			audit := AuditInterceptor(slog.New(slog.NewJSONHandler(&buf, nil)))
+			ctx := context.Background()
+			if c.id != nil {
+				ctx = authn.WithIdentity(ctx, *c.id)
+			}
+			if _, err := audit(ctx, nil, info, h); err != nil {
+				t.Fatal(err)
+			}
+			var line map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+				t.Fatalf("audit line %q: %v", buf.String(), err)
+			}
+			if got := line["sub"]; got != c.wantSub {
+				t.Errorf("sub = %v, want %v (line %s)", got, c.wantSub, buf.String())
+			}
+		})
 	}
 }
