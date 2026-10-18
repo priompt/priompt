@@ -55,9 +55,16 @@ func (s *Server) PublishPrompt(ctx context.Context, req *pb.PublishPromptRequest
 
 	// Idempotent on main: republishing the served HEAD's content is a no-op — no
 	// write, no notify. Lets `promptctl push` publish every prompt; only changed
-	// ones fire. (Branch publishes rely on commit-level idempotency instead.)
+	// ones fire. On another branch, republishing its tip's content is likewise a
+	// no-op: the commit hash includes the parent, so committing again would add
+	// a duplicate commit rather than dedupe.
 	// On a real change, classify the edit so the notification carries the verdict.
 	class := ""
+	if !onMain {
+		if tip, err := s.Store.Resolve(ctx, req.GetUri(), branch); err == nil && tip.VersionHash == hash {
+			return &pb.PublishPromptResponse{VersionHash: hash}, nil
+		}
+	}
 	if onMain {
 		prev, err := s.Store.Get(ctx, req.GetUri())
 		switch {
