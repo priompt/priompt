@@ -266,15 +266,26 @@ func (s *Server) DiffCommits(ctx context.Context, req *pb.DiffCommitsRequest) (*
 	if err := auth.Authorize(ctx, req.GetUri()); err != nil {
 		return nil, err
 	}
-	from, err := s.Store.GetCommit(ctx, req.GetFromHash())
+	from, err := s.commitOf(ctx, req.GetUri(), req.GetFromHash())
 	if err != nil {
 		return nil, diffCommitErr(err)
 	}
-	to, err := s.Store.GetCommit(ctx, req.GetToHash())
+	to, err := s.commitOf(ctx, req.GetUri(), req.GetToHash())
 	if err != nil {
 		return nil, diffCommitErr(err)
 	}
 	return s.diff(from.Template, to.Template)
+}
+
+// commitOf loads a commit and requires it to belong to uri. Authorization was
+// checked against uri, so a commit of any other prompt is reported as not found,
+// exactly like a hash that does not exist.
+func (s *Server) commitOf(ctx context.Context, uri, hash string) (store.Commit, error) {
+	c, err := s.Store.GetCommit(ctx, hash)
+	if err == nil && c.URI != uri {
+		return store.Commit{}, store.ErrNotFound
+	}
+	return c, err
 }
 
 func diffCommitErr(err error) error {
