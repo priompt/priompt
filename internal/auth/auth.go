@@ -38,6 +38,13 @@ func Scope(ctx context.Context) string {
 	return id.Org
 }
 
+// Subject returns the caller's subject (a JWT's sub, e.g. "ci-bot"), or "" for
+// static tokens and when auth is disabled.
+func Subject(ctx context.Context) string {
+	id, _ := authn.FromContext(ctx)
+	return id.Sub
+}
+
 // ScopeOf returns who to record as the commit author.
 //
 // The subject comes first: a JWT carries a real one (ci-bot, sujal@acme.com) and

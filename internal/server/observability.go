@@ -54,21 +54,25 @@ func MetricsInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo
 	return resp, err
 }
 
-// AuditInterceptor writes one structured log line per RPC: who (org scope),
-// what (method, uri), and outcome (code, latency). Chain it after AuthInterceptor
-// so the org scope is populated.
+// AuditInterceptor writes one structured log line per RPC: who (org scope, and
+// the JWT subject when the caller has one), what (method, uri), and outcome
+// (code, latency). Chain it after AuthInterceptor so the identity is populated.
 func AuditInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		start := time.Now()
 		resp, err := handler(ctx, req)
-		scope := auth.Scope(ctx)
-		logger.Info("rpc",
-			"method", info.FullMethod,
-			"org", scope,
+		attrs := []any{"method", info.FullMethod, "org", auth.Scope(ctx)}
+		// Static tokens carry no subject; a priompt-auth JWT does (ci-bot, a
+		// user's email), and it is what answers "who made this write".
+		if sub := auth.Subject(ctx); sub != "" {
+			attrs = append(attrs, "sub", sub)
+		}
+		attrs = append(attrs,
 			"uri", uriOf(req),
 			"code", status.Code(err).String(),
 			"ms", time.Since(start).Milliseconds(),
 		)
+		logger.Info("rpc", attrs...)
 		return resp, err
 	}
 }
