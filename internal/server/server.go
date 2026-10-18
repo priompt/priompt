@@ -398,6 +398,15 @@ func toWindows(ws []semdiff.Window) []*pb.Window {
 	return out
 }
 
+// splitLines splits a template into lines for the semantic diff. Both sides are
+// normalised to end in one newline first, so "a" and "a\n" diff the same (files
+// and echo add one; API callers may not). Normalising towards the newline, not
+// away from it, keeps an edit of the last text line a single "replace": semdiff
+// reports an edit of the very last element as delete + insert (priompt/proto#5).
 func splitLines(s string) []string {
-	return strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	if !strings.HasSuffix(s, "\n") {
+		s += "\n"
+	}
+	return strings.Split(s, "\n")
 }
