@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -746,7 +747,7 @@ func importCmd(args []string) {
 
 	n, unchanged, err := importPrompts(context.Background(), st, r)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("%s: %v", *in, err)
 	}
 	fmt.Printf("imported %d prompts, %d unchanged (served content only — history was not "+
 		"part of this file; use `priompt restore` for a full backup)\n", n, unchanged)
@@ -755,14 +756,25 @@ func importCmd(args []string) {
 // importPrompts decodes and validates every prompt in r, then commits each one
 // onto main. An invalid prompt fails the import before anything is written.
 func importPrompts(ctx context.Context, st *store.Store, r io.Reader) (n, unchanged int, err error) {
+	// A file saved from PowerShell 5.1 may start with a BOM: skip a UTF-8 one,
+	// refuse UTF-16, which the JSON decoder would reject with a cryptic error.
+	br := bufio.NewReader(r)
+	if head, _ := br.Peek(3); string(head) == utf8BOM {
+		br.Discard(3)
+	} else if _, err := normalizeTemplate(string(head)); err != nil {
+		return 0, 0, err
+	}
 	var prompts []store.Prompt
-	dec := json.NewDecoder(r)
+	dec := json.NewDecoder(br)
 	for {
 		var p store.Prompt
 		if err := dec.Decode(&p); err == io.EOF {
 			break
 		} else if err != nil {
 			return 0, 0, err
+		}
+		if p.Template, err = normalizeTemplate(p.Template); err != nil {
+			return 0, 0, fmt.Errorf("%s: %w", p.URI, err)
 		}
 		if err := validate.Prompt(p.URI, p.Template, p.Slots); err != nil {
 			return 0, 0, fmt.Errorf("prompt %d (%s): invalid, nothing imported: %w", len(prompts)+1, p.URI, err)
@@ -949,7 +961,26 @@ func readTemplate(file string) string {
 	if err != nil {
 		log.Fatal(err)
 	}
-	return string(b)
+	t, err := normalizeTemplate(string(b))
+	if err != nil {
+		log.Fatalf("%s: %v", file, err)
+	}
+	return t
+}
+
+const utf8BOM = "\xEF\xBB\xBF"
+
+// normalizeTemplate turns what Windows editors and PowerShell 5.1 commonly write
+// into the plain UTF-8, LF text templates are stored as: a leading UTF-8 BOM
+// (`Out-File -Encoding utf8`) is dropped and CRLF becomes LF. UTF-16 (the
+// default of PowerShell 5.1's `>`) is refused with a clear message rather than
+// failing later as a malformed placeholder or an invalid-UTF-8 RPC error.
+func normalizeTemplate(t string) (string, error) {
+	if strings.HasPrefix(t, "\xFF\xFE") || strings.HasPrefix(t, "\xFE\xFF") || strings.IndexByte(t, 0) >= 0 {
+		return "", errors.New("file is UTF-16; save as UTF-8")
+	}
+	t = strings.TrimPrefix(t, utf8BOM)
+	return strings.ReplaceAll(t, "\r\n", "\n"), nil
 }
 
 type multiFlag []string
