@@ -2,9 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	store "github.com/priompt/db-adapters"
 	pb "github.com/priompt/proto/gen/priompt/v1"
@@ -61,5 +65,40 @@ func TestMergeIntoMainNotifies(t *testing.T) {
 	must(s.MergeBranch(ctx, &pb.MergeBranchRequest{Uri: uri, From: "other"}))
 	if len(n.events) != 1 {
 		t.Fatalf("merge of identical content notified: %v", n.events)
+	}
+}
+
+// noDelCache cannot invalidate, like a Redis node whose DEL fails.
+type noDelCache struct{}
+
+func (noDelCache) Get(string) (*pb.GetPromptResponse, bool) { return nil, false }
+func (noDelCache) Put(string, *pb.GetPromptResponse)        {}
+func (noDelCache) Invalidate(string) error                  { return errors.New("cache down") }
+
+// A merge into main whose cache clear fails is reported UNAVAILABLE so the
+// caller retries, but the retry brings no new content and does not notify, so
+// the original call must still send the event.
+func TestMergeNotifiesWhenCacheClearFails(t *testing.T) {
+	s, n := newTestServer(t)
+	ctx := context.Background()
+	const uri = "priompt://o/r/p"
+	if _, err := s.PublishPrompt(ctx, &pb.PublishPromptRequest{Uri: uri, Template: "v1 {x}", Slots: []string{"x"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateBranch(ctx, &pb.CreateBranchRequest{Uri: uri, Name: "feature"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PublishPrompt(ctx, &pb.PublishPromptRequest{Uri: uri, Template: "v2 {x}", Slots: []string{"x"}, Branch: "feature"}); err != nil {
+		t.Fatal(err)
+	}
+	n.events = nil
+	s.Cache = noDelCache{}
+	merge := &pb.MergeBranchRequest{Uri: uri, From: "feature"}
+	if _, err := s.MergeBranch(ctx, merge); status.Code(err) != codes.Unavailable {
+		t.Fatalf("merge with a failing cache: err = %v, want Unavailable", err)
+	}
+	_, _ = s.MergeBranch(ctx, merge) // the caller's retry
+	if len(n.events) != 1 {
+		t.Fatalf("events = %v; want exactly one for the merge", n.events)
 	}
 }

@@ -260,14 +260,17 @@ func (s *Server) MergeBranch(ctx context.Context, req *pb.MergeBranchRequest) (*
 	}
 	// Merging into main moves the served HEAD — invalidate its cache and, when
 	// the served content changed, notify subscribers as a publish does.
+	// Notify even when the cache clear fails: a retried merge brings no new
+	// content, so it would not notify, and the event would be lost.
 	if onMain {
-		if err := invalidate(s.Cache, req.GetUri()); err != nil {
-			return nil, err
-		}
+		invErr := invalidate(s.Cache, req.GetUri())
 		if s.Notifier != nil {
 			if c, err := s.Store.GetCommit(ctx, hash); err == nil && c.VersionHash != prev.VersionHash {
 				_ = s.Notifier.Publish(req.GetUri(), c.VersionHash, s.classify(prev.Template, c.Template))
 			}
+		}
+		if invErr != nil {
+			return nil, invErr
 		}
 	}
 	return &pb.MergeBranchResponse{CommitHash: hash}, nil
