@@ -249,14 +249,25 @@ func (s *Server) MergeBranch(ctx context.Context, req *pb.MergeBranchRequest) (*
 	if err := auth.RequireWrite(ctx); err != nil {
 		return nil, err
 	}
+	onMain := branchOr(req.GetInto()) == store.DefaultBranch
+	var prev store.Prompt
+	if onMain {
+		prev, _ = s.Store.Get(ctx, req.GetUri())
+	}
 	hash, err := s.Store.Merge(ctx, req.GetUri(), branchOr(req.GetInto()), req.GetFrom(), auth.ScopeOf(ctx), req.GetMessage())
 	if err != nil {
 		return nil, branchErr(err)
 	}
-	// Merging into main moves the served HEAD — invalidate its cache.
-	if branchOr(req.GetInto()) == store.DefaultBranch {
+	// Merging into main moves the served HEAD — invalidate its cache and, when
+	// the served content changed, notify subscribers as a publish does.
+	if onMain {
 		if err := invalidate(s.Cache, req.GetUri()); err != nil {
 			return nil, err
+		}
+		if s.Notifier != nil {
+			if c, err := s.Store.GetCommit(ctx, hash); err == nil && c.VersionHash != prev.VersionHash {
+				_ = s.Notifier.Publish(req.GetUri(), c.VersionHash, s.classify(prev.Template, c.Template))
+			}
 		}
 	}
 	return &pb.MergeBranchResponse{CommitHash: hash}, nil
