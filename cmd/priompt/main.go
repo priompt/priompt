@@ -509,12 +509,31 @@ func publish(args []string) {
 
 	conn := dial(*addr, *useTLS, *caCert, *clientCert, *clientKey)
 	defer conn.Close()
-	resp, err := pb.NewPromptServiceClient(conn).PublishPrompt(authCtx(),
+	line, err := publishPrompt(authCtx(), pb.NewPromptServiceClient(conn),
 		&pb.PublishPromptRequest{Uri: *uri, Template: template, Slots: slots})
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("published %s (%s) — subscribers notified\n", *uri, resp.GetVersionHash()[:12])
+	fmt.Println(line)
+}
+
+// publishPrompt publishes to main and describes the outcome. The server sends a
+// change event only when the served version changes; republishing the content
+// main already serves is a no-op with no event, so say so rather than claim
+// subscribers were notified.
+func publishPrompt(ctx context.Context, c pb.PromptServiceClient, req *pb.PublishPromptRequest) (string, error) {
+	before := ""
+	if cur, err := c.GetPrompt(ctx, &pb.GetPromptRequest{Uri: req.GetUri()}); err == nil {
+		before = cur.GetVersionHash()
+	}
+	resp, err := c.PublishPrompt(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	if resp.GetVersionHash() == before {
+		return fmt.Sprintf("unchanged %s (%s) — already served; no change event sent", req.GetUri(), before[:12]), nil
+	}
+	return fmt.Sprintf("published %s (%s) — subscribers notified", req.GetUri(), resp.GetVersionHash()[:12]), nil
 }
 
 // watch subscribes to a prompt's version-change events — the push side an agent
