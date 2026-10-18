@@ -166,7 +166,10 @@ func serve(args []string) {
 	var notifier server.Notifier
 	if *natsAddr != "" {
 		host, port := splitHostPort(*natsAddr)
-		cfg := pubsub.Config{Host: host, Port: port, Token: *natsToken}
+		// -nats-token is the server's own full-rights credential. Subscribers
+		// may instead present their API token, which only lets them watch
+		// their own org.
+		cfg := pubsub.Config{Host: host, Port: port, Token: *natsToken, Authenticate: natsAuth(providers)}
 		// Change events name every prompt that moves and carry the verdict that
 		// agents gate auto-reload on, so an open broker is a disclosure channel
 		// and a forgery channel at once. Binding to a non-loopback address
@@ -243,6 +246,27 @@ func serve(args []string) {
 		version, commit, *addr, *cert != "", *clientCA != "", len(tokens), cacheName(*redisURL, *cacheTTL), embedName(*embedURL, *embedModel), *natsAddr, *metricsAddr, *rateLimit)
 	if err := gs.Serve(lis); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// natsAuth checks a NATS client's token against the same providers the gRPC API
+// uses and returns the org it is scoped to ("" = admin). Nil when API auth is
+// disabled, leaving the broker on -nats-token alone.
+func natsAuth(providers []authn.Provider) func(string) (string, bool) {
+	if len(providers) == 0 {
+		return nil
+	}
+	return func(token string) (string, bool) {
+		for _, p := range providers {
+			id, err := p.Authenticate(context.Background(), "Bearer "+token)
+			if err == nil {
+				return id.Org, true
+			}
+			if !errors.Is(err, authn.ErrUnrecognized) {
+				return "", false // e.g. expired
+			}
+		}
+		return "", false
 	}
 }
 
