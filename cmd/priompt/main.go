@@ -283,7 +283,7 @@ func seedDemo(st *store.Store) {
 		return // already present (or a real error we'll surface on the first real request)
 	}
 	if _, err := st.Commit(context.Background(), uri, "main",
-		"Hi {name}, welcome to {org}!", []string{"name", "org"},
+		"Hi {name}, welcome to {org}!\n", []string{"name", "org"},
 		"priompt", "seed: demo prompt"); err != nil {
 		log.Printf("seed demo prompt: %v", err)
 		return
@@ -485,8 +485,14 @@ func hasStructural(res []semdiff.Result) bool {
 	return false
 }
 
+// splitLines matches internal/server's: both sides end in one newline, so "a"
+// and "a\n" diff the same.
 func splitLines(s string) []string {
-	return strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	if !strings.HasSuffix(s, "\n") {
+		s += "\n"
+	}
+	return strings.Split(s, "\n")
 }
 
 // diff asks the server to run the Semantic Propagation Diff between the stored
