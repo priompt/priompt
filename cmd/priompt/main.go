@@ -155,6 +155,9 @@ func serve(args []string) {
 		log.Fatal(err)
 	}
 	defer st.Close()
+	if err := checkEncryptionKey(st); err != nil {
+		log.Fatal(err)
+	}
 
 	if *seed {
 		seedDemo(st)
@@ -262,6 +265,31 @@ func seedDemo(st *store.Store) {
 		return
 	}
 	log.Printf("seeded demo prompt %s", uri)
+}
+
+// checkEncryptionKey reads the stored prompts once at startup, so a missing or
+// wrong PRIOMPT_ENCRYPTION_KEY stops the server with a clear message instead of
+// surfacing later as "lookup failed" on every fetch of an encrypted prompt (list
+// still works, because it never decrypts). It returns an error only for a key
+// problem; any other read failure is logged and left to the request path.
+func checkEncryptionKey(st *store.Store) error {
+	_, err := st.Dump(context.Background())
+	if err == nil {
+		return nil
+	}
+	var syntax *json.SyntaxError
+	switch {
+	case os.Getenv("PRIOMPT_ENCRYPTION_KEY") == "" && errors.As(err, &syntax):
+		// No key: encrypted columns pass through as "enc1:…" and the slots column
+		// fails to parse as JSON.
+		return errors.New("encryption key missing or wrong: the database holds encrypted prompts " +
+			"but PRIOMPT_ENCRYPTION_KEY is not set")
+	case os.Getenv("PRIOMPT_ENCRYPTION_KEY") != "" && strings.Contains(err.Error(), "decrypt column"):
+		return errors.New("encryption key missing or wrong: PRIOMPT_ENCRYPTION_KEY does not decrypt " +
+			"the stored prompts (it must be the key they were written with)")
+	}
+	log.Printf("startup read of stored prompts failed: %v", err)
+	return nil
 }
 
 // serverCreds builds the server's TLS credentials. With clientCA set it
