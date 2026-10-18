@@ -749,7 +749,16 @@ func initCmd(args []string) {
 	}
 	fmt.Printf("wrote admin token to %s\n\n", *tokensFile)
 	fmt.Printf("  start server:  priompt serve -tokens-file %s\n", *tokensFile)
-	fmt.Printf("  point client:  export PRIOMPT_URL=priompt://%s@%s\n", token, *addr)
+	fmt.Printf("  point client:  %s\n", setEnvLine(runtime.GOOS, "PRIOMPT_URL", "priompt://"+token+"@"+*addr))
+}
+
+// setEnvLine is the shell command that sets an environment variable: PowerShell
+// syntax on Windows (where `export` does not exist), POSIX sh everywhere else.
+func setEnvLine(goos, name, value string) string {
+	if goos == "windows" {
+		return fmt.Sprintf(`$env:%s = "%s"`, name, value)
+	}
+	return fmt.Sprintf("export %s=%s", name, value)
 }
 
 // dial opens a gRPC client connection, optionally over TLS. With clientCert/Key
