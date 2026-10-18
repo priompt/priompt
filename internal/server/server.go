@@ -143,9 +143,14 @@ func (s *Server) GetPrompt(ctx context.Context, req *pb.GetPromptRequest) (*pb.G
 
 // ListPrompts browses a repo (a URI prefix) like a filesystem: it returns the
 // served-HEAD prompts whose URI starts with the prefix. Auth scopes by the
-// prefix's org, so a scoped token can only list within its own org.
+// prefix's org, so a scoped token can only list within its own org. An empty
+// prefix lists everything the caller can read: all of it for an admin, the
+// token's own org for a scoped token.
 func (s *Server) ListPrompts(ctx context.Context, req *pb.ListPromptsRequest) (*pb.ListPromptsResponse, error) {
 	prefix := req.GetPrefix()
+	if scope := auth.Scope(ctx); prefix == "" && scope != "" {
+		prefix = validate.Scheme + scope + "/"
+	}
 	if err := auth.AuthorizePrefix(ctx, prefix); err != nil {
 		return nil, err
 	}
