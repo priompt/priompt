@@ -55,4 +55,4 @@ $P -uri priompt://acme/content/summarize -file - -slot audience -slot thread <<'
 Summarize this thread for {audience}: {thread}
 EOF
 
-./priompt.exe list -addr "$ADDR"
+"$BIN" list -addr "$ADDR"
