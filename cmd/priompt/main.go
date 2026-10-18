@@ -418,10 +418,36 @@ func put(args []string) {
 		log.Fatal(err)
 	}
 
-	if err := st.Put(context.Background(), store.Prompt{URI: *uri, Template: template, Slots: slots}); err != nil {
+	wrote, err := commitMain(context.Background(), st, *uri, template, slots, "put")
+	if err != nil {
 		log.Fatal(err)
 	}
+	if !wrote {
+		fmt.Printf("unchanged %s (%s)\n", *uri, store.Hash(template, slots)[:12])
+		return
+	}
 	fmt.Printf("stored %s (%s)\n", *uri, store.Hash(template, slots)[:12])
+}
+
+// commitMain validates a prompt and records it as a commit on main, which also
+// updates the served HEAD — the same validate + commit path as PublishPrompt,
+// so CLI writes have history and can be rolled back. Content main already
+// holds is a no-op (no duplicate commit). Reports whether a commit was written.
+func commitMain(ctx context.Context, st *store.Store, uri, template string, slots []string, message string) (bool, error) {
+	if err := validate.Prompt(uri, template, slots); err != nil {
+		return false, fmt.Errorf("%s: invalid prompt: %w", uri, err)
+	}
+	tip, err := st.Resolve(ctx, uri, store.DefaultBranch)
+	switch {
+	case err == nil && tip.VersionHash == store.Hash(template, slots):
+		return false, nil
+	case err != nil && !errors.Is(err, store.ErrNotFound):
+		return false, err
+	}
+	if _, err := st.Commit(ctx, uri, store.DefaultBranch, template, slots, "priompt", message); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func hasStructural(res []semdiff.Result) bool {
@@ -604,8 +630,9 @@ func export(args []string) {
 		"commits and branches are not included; use `priompt backup` for those)\n", len(prompts))
 }
 
-// importCmd reads JSON-lines prompts from -in and upserts each into the store.
-// Put is an idempotent upsert, so importing is safe to repeat.
+// importCmd reads JSON-lines prompts from -in and commits each onto main. The
+// whole file is validated before anything is written, and content main already
+// holds is skipped, so importing is safe to repeat.
 func importCmd(args []string) {
 	fs := flag.NewFlagSet("import", flag.ExitOnError)
 	dbPath := fs.String("db", "priompt.db", "sqlite file path, or a postgres:// DSN")
@@ -627,22 +654,43 @@ func importCmd(args []string) {
 	}
 	defer st.Close()
 
+	n, unchanged, err := importPrompts(context.Background(), st, r)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("imported %d prompts, %d unchanged (served content only — history was not "+
+		"part of this file; use `priompt restore` for a full backup)\n", n, unchanged)
+}
+
+// importPrompts decodes and validates every prompt in r, then commits each one
+// onto main. An invalid prompt fails the import before anything is written.
+func importPrompts(ctx context.Context, st *store.Store, r io.Reader) (n, unchanged int, err error) {
+	var prompts []store.Prompt
 	dec := json.NewDecoder(r)
-	n := 0
 	for {
 		var p store.Prompt
 		if err := dec.Decode(&p); err == io.EOF {
 			break
 		} else if err != nil {
-			log.Fatal(err)
+			return 0, 0, err
 		}
-		if err := st.Put(context.Background(), p); err != nil {
-			log.Fatal(err)
+		if err := validate.Prompt(p.URI, p.Template, p.Slots); err != nil {
+			return 0, 0, fmt.Errorf("prompt %d (%s): invalid, nothing imported: %w", len(prompts)+1, p.URI, err)
 		}
-		n++
+		prompts = append(prompts, p)
 	}
-	fmt.Printf("imported %d prompts (served content only — history was not "+
-		"part of this file; use `priompt restore` for a full backup)\n", n)
+	for _, p := range prompts {
+		wrote, err := commitMain(ctx, st, p.URI, p.Template, p.Slots, "import")
+		if err != nil {
+			return n, unchanged, err
+		}
+		if wrote {
+			n++
+		} else {
+			unchanged++
+		}
+	}
+	return n, unchanged, nil
 }
 
 // migrateCmd applies pending schema migrations (Open runs them) and reports the
