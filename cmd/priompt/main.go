@@ -135,6 +135,9 @@ func serve(args []string) {
 	seed := fs.Bool("seed", os.Getenv("PRIOMPT_SEED") != "false", "seed a demo prompt when it is absent (PRIOMPT_SEED=false disables)")
 	jwksURL := fs.String("auth-jwks-url", os.Getenv("PRIOMPT_JWKS_URL"), "priompt-auth /jwks URL; accepts its short-lived JWTs alongside static tokens")
 	fs.Parse(args)
+	if err := checkTLSFlags(*cert, *key, *clientCA); err != nil {
+		log.Fatal(err)
+	}
 	// Credentials are the auth repo's job: it parses the tokens file and
 	// verifies its own JWTs. Core only decides which providers to run.
 	tokens, err := authn.LoadTokens(*tokensFile)
@@ -229,14 +232,12 @@ func serve(args []string) {
 		server.AuditInterceptor(audit),  // logs with scope, sees rate-limit rejections
 		server.RateLimitInterceptor(*rateLimit, *rateBurst),
 	)}
-	if *cert != "" && *key != "" {
+	if *cert != "" {
 		creds, err := serverCreds(*cert, *key, *clientCA)
 		if err != nil {
 			log.Fatal(err)
 		}
 		opts = append(opts, grpc.Creds(creds))
-	} else if *clientCA != "" {
-		log.Fatal("-client-ca requires -tls-cert and -tls-key")
 	}
 	gs := grpc.NewServer(opts...)
 	pb.RegisterPromptServiceServer(gs, server.NewServer(st, cache, emb, notifier))
@@ -289,6 +290,18 @@ func seedDemo(st *store.Store) {
 		return
 	}
 	log.Printf("seeded demo prompt %s", uri)
+}
+
+// checkTLSFlags refuses TLS flag combinations that would silently serve
+// plaintext: a cert without its key (or the reverse), or -client-ca alone.
+func checkTLSFlags(cert, key, clientCA string) error {
+	if (cert == "") != (key == "") {
+		return errors.New("-tls-cert and -tls-key must be set together")
+	}
+	if clientCA != "" && cert == "" {
+		return errors.New("-client-ca requires -tls-cert and -tls-key")
+	}
+	return nil
 }
 
 // checkEncryptionKey reads the stored prompts once at startup, so a missing or
