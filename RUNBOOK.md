@@ -436,7 +436,7 @@ score word overlap; this is scoring meaning. Verdicts are input-exact: the
 ## T22 — SSO against a real IdP (Keycloak 26 in Docker)
 
 Not a mock: a real Keycloak with realm `corp`, public client `priompt`
-(direct-access grants), user `sujal` in group `acme-authors`, and a
+(direct-access grants), user `ada` in group `acme-authors`, and a
 group-membership protocol mapper emitting a `groups` claim.
 
 ```sh
@@ -448,7 +448,7 @@ group-membership protocol mapper emitting a `groups` claim.
 The four-step round trip, observed:
 
 ```text
-1. sujal logs in at Keycloak            -> RS256 ID token
+1. ada logs in at Keycloak              -> RS256 ID token
 2. exchange at priompt-auth             -> verified (sig via Keycloak JWKS,
    issuer, audience, expiry), groups mapped:
    priompt claims: {'sub': 'd5c6cf8b-…', 'org': 'acme', 'rw': True, 'iss': 'priompt-auth'}

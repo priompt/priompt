@@ -47,7 +47,7 @@ func Subject(ctx context.Context) string {
 
 // ScopeOf returns who to record as the commit author.
 //
-// The subject comes first: a JWT carries a real one (ci-bot, sujal@acme.com) and
+// The subject comes first: a JWT carries a real one (ci-bot, ada@example.com) and
 // that is what an audit log is for. Falling straight through to the org meant
 // every admin token authored as "anonymous" and every scoped token authored as
 // its org — so a commit log could not answer "who changed this", which is half

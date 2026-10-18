@@ -110,7 +110,7 @@ from priompt_sdk import PromptClient
 
 client = PromptClient(host="localhost:8443")
 prompt = client.get("priompt://acme/onboarding/welcome")
-print(prompt.template.format(name="Sujal", org="Acme"))   # Hi Sujal, welcome to Acme!
+print(prompt.template.format(name="Ada", org="Acme"))   # Hi Ada, welcome to Acme!
 ```
 
 Set `PRIOMPT_SEED=false` (or `serve -seed=false`) to disable the demo prompt in
@@ -139,7 +139,7 @@ from priompt_sdk import PromptClient
 
 client = PromptClient(host="localhost:8443", token="secret")
 prompt = client.get("priompt://acme/onboarding/welcome")
-text = prompt.template.format(name="Sujal", org="Acme")
+text = prompt.template.format(name="Ada", org="Acme")
 ```
 
 Storing a prompt whose template and slots disagree fails and writes nothing:
