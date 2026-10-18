@@ -158,6 +158,9 @@ func serve(args []string) {
 		log.Fatal(err)
 	}
 	defer st.Close()
+	if err := checkEncryptionKey(st); err != nil {
+		log.Fatal(err)
+	}
 
 	if *seed {
 		seedDemo(st)
@@ -169,7 +172,10 @@ func serve(args []string) {
 	var notifier server.Notifier
 	if *natsAddr != "" {
 		host, port := splitHostPort(*natsAddr)
-		cfg := pubsub.Config{Host: host, Port: port, Token: *natsToken}
+		// -nats-token is the server's own full-rights credential. Subscribers
+		// may instead present their API token, which only lets them watch
+		// their own org.
+		cfg := pubsub.Config{Host: host, Port: port, Token: *natsToken, Authenticate: natsAuth(providers)}
 		// Change events name every prompt that moves and carry the verdict that
 		// agents gate auto-reload on, so an open broker is a disclosure channel
 		// and a forgery channel at once. Binding to a non-loopback address
@@ -247,6 +253,27 @@ func serve(args []string) {
 	}
 }
 
+// natsAuth checks a NATS client's token against the same providers the gRPC API
+// uses and returns the org it is scoped to ("" = admin). Nil when API auth is
+// disabled, leaving the broker on -nats-token alone.
+func natsAuth(providers []authn.Provider) func(string) (string, bool) {
+	if len(providers) == 0 {
+		return nil
+	}
+	return func(token string) (string, bool) {
+		for _, p := range providers {
+			id, err := p.Authenticate(context.Background(), "Bearer "+token)
+			if err == nil {
+				return id.Org, true
+			}
+			if !errors.Is(err, authn.ErrUnrecognized) {
+				return "", false // e.g. expired
+			}
+		}
+		return "", false
+	}
+}
+
 // seedDemo commits a demo prompt on first start so `client.get` works out of the
 // box. It only writes when the demo URI is absent, so it is idempotent and never
 // touches user data. Failures are logged, not fatal — a missing demo must not
@@ -257,7 +284,7 @@ func seedDemo(st *store.Store) {
 		return // already present (or a real error we'll surface on the first real request)
 	}
 	if _, err := st.Commit(context.Background(), uri, "main",
-		"Hi {name}, welcome to {org}!", []string{"name", "org"},
+		"Hi {name}, welcome to {org}!\n", []string{"name", "org"},
 		"priompt", "seed: demo prompt"); err != nil {
 		log.Printf("seed demo prompt: %v", err)
 		return
@@ -274,6 +301,31 @@ func checkTLSFlags(cert, key, clientCA string) error {
 	if clientCA != "" && cert == "" {
 		return errors.New("-client-ca requires -tls-cert and -tls-key")
 	}
+	return nil
+}
+
+// checkEncryptionKey reads the stored prompts once at startup, so a missing or
+// wrong PRIOMPT_ENCRYPTION_KEY stops the server with a clear message instead of
+// surfacing later as "lookup failed" on every fetch of an encrypted prompt (list
+// still works, because it never decrypts). It returns an error only for a key
+// problem; any other read failure is logged and left to the request path.
+func checkEncryptionKey(st *store.Store) error {
+	_, err := st.Dump(context.Background())
+	if err == nil {
+		return nil
+	}
+	var syntax *json.SyntaxError
+	switch {
+	case os.Getenv("PRIOMPT_ENCRYPTION_KEY") == "" && errors.As(err, &syntax):
+		// No key: encrypted columns pass through as "enc1:…" and the slots column
+		// fails to parse as JSON.
+		return errors.New("encryption key missing or wrong: the database holds encrypted prompts " +
+			"but PRIOMPT_ENCRYPTION_KEY is not set")
+	case os.Getenv("PRIOMPT_ENCRYPTION_KEY") != "" && strings.Contains(err.Error(), "decrypt column"):
+		return errors.New("encryption key missing or wrong: PRIOMPT_ENCRYPTION_KEY does not decrypt " +
+			"the stored prompts (it must be the key they were written with)")
+	}
+	log.Printf("startup read of stored prompts failed: %v", err)
 	return nil
 }
 
@@ -431,10 +483,36 @@ func put(args []string) {
 		log.Fatal(err)
 	}
 
-	if err := st.Put(context.Background(), store.Prompt{URI: *uri, Template: template, Slots: slots}); err != nil {
+	wrote, err := commitMain(context.Background(), st, *uri, template, slots, "put")
+	if err != nil {
 		log.Fatal(err)
 	}
+	if !wrote {
+		fmt.Printf("unchanged %s (%s)\n", *uri, store.Hash(template, slots)[:12])
+		return
+	}
 	fmt.Printf("stored %s (%s)\n", *uri, store.Hash(template, slots)[:12])
+}
+
+// commitMain validates a prompt and records it as a commit on main, which also
+// updates the served HEAD — the same validate + commit path as PublishPrompt,
+// so CLI writes have history and can be rolled back. Content main already
+// holds is a no-op (no duplicate commit). Reports whether a commit was written.
+func commitMain(ctx context.Context, st *store.Store, uri, template string, slots []string, message string) (bool, error) {
+	if err := validate.Prompt(uri, template, slots); err != nil {
+		return false, fmt.Errorf("%s: invalid prompt: %w", uri, err)
+	}
+	tip, err := st.Resolve(ctx, uri, store.DefaultBranch)
+	switch {
+	case err == nil && tip.VersionHash == store.Hash(template, slots):
+		return false, nil
+	case err != nil && !errors.Is(err, store.ErrNotFound):
+		return false, err
+	}
+	if _, err := st.Commit(ctx, uri, store.DefaultBranch, template, slots, "priompt", message); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func hasStructural(res []semdiff.Result) bool {
@@ -446,8 +524,14 @@ func hasStructural(res []semdiff.Result) bool {
 	return false
 }
 
+// splitLines matches internal/server's: both sides end in one newline, so "a"
+// and "a\n" diff the same.
 func splitLines(s string) []string {
-	return strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	if !strings.HasSuffix(s, "\n") {
+		s += "\n"
+	}
+	return strings.Split(s, "\n")
 }
 
 // diff asks the server to run the Semantic Propagation Diff between the stored
@@ -522,12 +606,31 @@ func publish(args []string) {
 
 	conn := dial(*addr, *useTLS, *caCert, *clientCert, *clientKey)
 	defer conn.Close()
-	resp, err := pb.NewPromptServiceClient(conn).PublishPrompt(authCtx(),
+	line, err := publishPrompt(authCtx(), pb.NewPromptServiceClient(conn),
 		&pb.PublishPromptRequest{Uri: *uri, Template: template, Slots: slots})
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("published %s (%s) — subscribers notified\n", *uri, resp.GetVersionHash()[:12])
+	fmt.Println(line)
+}
+
+// publishPrompt publishes to main and describes the outcome. The server sends a
+// change event only when the served version changes; republishing the content
+// main already serves is a no-op with no event, so say so rather than claim
+// subscribers were notified.
+func publishPrompt(ctx context.Context, c pb.PromptServiceClient, req *pb.PublishPromptRequest) (string, error) {
+	before := ""
+	if cur, err := c.GetPrompt(ctx, &pb.GetPromptRequest{Uri: req.GetUri()}); err == nil {
+		before = cur.GetVersionHash()
+	}
+	resp, err := c.PublishPrompt(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	if resp.GetVersionHash() == before {
+		return fmt.Sprintf("unchanged %s (%s) — already served; no change event sent", req.GetUri(), before[:12]), nil
+	}
+	return fmt.Sprintf("published %s (%s) — subscribers notified", req.GetUri(), resp.GetVersionHash()[:12]), nil
 }
 
 // watch subscribes to a prompt's version-change events — the push side an agent
@@ -545,7 +648,7 @@ func watch(args []string) {
 	}
 	sub, err := pubsub.Connect(*natsURL)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(redactURL(err.Error())) // a parse error quotes the URL
 	}
 	defer sub.Close()
 	if _, err := sub.Subscribe(*uri, func(ev pubsub.Event) {
@@ -560,7 +663,7 @@ func watch(args []string) {
 	}); err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("watching %s on %s", *uri, *natsURL)
+	log.Printf("watching %s on %s", *uri, redactURL(*natsURL))
 	select {} // block forever; Ctrl-C to stop
 }
 
@@ -617,8 +720,9 @@ func export(args []string) {
 		"commits and branches are not included; use `priompt backup` for those)\n", len(prompts))
 }
 
-// importCmd reads JSON-lines prompts from -in and upserts each into the store.
-// Put is an idempotent upsert, so importing is safe to repeat.
+// importCmd reads JSON-lines prompts from -in and commits each onto main. The
+// whole file is validated before anything is written, and content main already
+// holds is skipped, so importing is safe to repeat.
 func importCmd(args []string) {
 	fs := flag.NewFlagSet("import", flag.ExitOnError)
 	dbPath := fs.String("db", "priompt.db", "sqlite file path, or a postgres:// DSN")
@@ -640,22 +744,43 @@ func importCmd(args []string) {
 	}
 	defer st.Close()
 
+	n, unchanged, err := importPrompts(context.Background(), st, r)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("imported %d prompts, %d unchanged (served content only — history was not "+
+		"part of this file; use `priompt restore` for a full backup)\n", n, unchanged)
+}
+
+// importPrompts decodes and validates every prompt in r, then commits each one
+// onto main. An invalid prompt fails the import before anything is written.
+func importPrompts(ctx context.Context, st *store.Store, r io.Reader) (n, unchanged int, err error) {
+	var prompts []store.Prompt
 	dec := json.NewDecoder(r)
-	n := 0
 	for {
 		var p store.Prompt
 		if err := dec.Decode(&p); err == io.EOF {
 			break
 		} else if err != nil {
-			log.Fatal(err)
+			return 0, 0, err
 		}
-		if err := st.Put(context.Background(), p); err != nil {
-			log.Fatal(err)
+		if err := validate.Prompt(p.URI, p.Template, p.Slots); err != nil {
+			return 0, 0, fmt.Errorf("prompt %d (%s): invalid, nothing imported: %w", len(prompts)+1, p.URI, err)
 		}
-		n++
+		prompts = append(prompts, p)
 	}
-	fmt.Printf("imported %d prompts (served content only — history was not "+
-		"part of this file; use `priompt restore` for a full backup)\n", n)
+	for _, p := range prompts {
+		wrote, err := commitMain(ctx, st, p.URI, p.Template, p.Slots, "import")
+		if err != nil {
+			return n, unchanged, err
+		}
+		if wrote {
+			n++
+		} else {
+			unchanged++
+		}
+	}
+	return n, unchanged, nil
 }
 
 // migrateCmd applies pending schema migrations (Open runs them) and reports the
@@ -704,7 +829,16 @@ func initCmd(args []string) {
 	}
 	fmt.Printf("wrote admin token to %s\n\n", *tokensFile)
 	fmt.Printf("  start server:  priompt serve -tokens-file %s\n", *tokensFile)
-	fmt.Printf("  point client:  export PRIOMPT_URL=priompt://%s@%s\n", token, *addr)
+	fmt.Printf("  point client:  %s\n", setEnvLine(runtime.GOOS, "PRIOMPT_URL", "priompt://"+token+"@"+*addr))
+}
+
+// setEnvLine is the shell command that sets an environment variable: PowerShell
+// syntax on Windows (where `export` does not exist), POSIX sh everywhere else.
+func setEnvLine(goos, name, value string) string {
+	if goos == "windows" {
+		return fmt.Sprintf(`$env:%s = "%s"`, name, value)
+	}
+	return fmt.Sprintf("export %s=%s", name, value)
 }
 
 // dial opens a gRPC client connection, optionally over TLS. With clientCert/Key
@@ -824,4 +958,19 @@ func (m *multiFlag) String() string { return fmt.Sprint([]string(*m)) }
 func (m *multiFlag) Set(v string) error {
 	*m = append(*m, v)
 	return nil
+}
+
+// redactURL replaces the credentials in a (comma-separated) NATS URL, or in an
+// error message quoting one, with *** for logging:
+// nats://token@host:4222 -> nats://***@host:4222.
+func redactURL(raw string) string {
+	parts := strings.Split(raw, ",")
+	for i, p := range parts {
+		if s := strings.Index(p, "://"); s >= 0 {
+			if at := strings.LastIndex(p, "@"); at > s {
+				parts[i] = p[:s+3] + "***" + p[at:]
+			}
+		}
+	}
+	return strings.Join(parts, ",")
 }

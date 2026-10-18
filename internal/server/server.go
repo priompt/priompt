@@ -55,9 +55,16 @@ func (s *Server) PublishPrompt(ctx context.Context, req *pb.PublishPromptRequest
 
 	// Idempotent on main: republishing the served HEAD's content is a no-op — no
 	// write, no notify. Lets `promptctl push` publish every prompt; only changed
-	// ones fire. (Branch publishes rely on commit-level idempotency instead.)
+	// ones fire. On another branch, republishing its tip's content is likewise a
+	// no-op: the commit hash includes the parent, so committing again would add
+	// a duplicate commit rather than dedupe.
 	// On a real change, classify the edit so the notification carries the verdict.
 	class := ""
+	if !onMain {
+		if tip, err := s.Store.Resolve(ctx, req.GetUri(), branch); err == nil && tip.VersionHash == hash {
+			return &pb.PublishPromptResponse{VersionHash: hash}, nil
+		}
+	}
 	if onMain {
 		prev, err := s.Store.Get(ctx, req.GetUri())
 		switch {
@@ -91,13 +98,17 @@ func (s *Server) PublishPrompt(ctx context.Context, req *pb.PublishPromptRequest
 		// A publish that cannot clear the cache has not taken effect for
 		// readers, so fail it rather than report a success that agents will not
 		// see. The version is already durable; the caller retries.
-		if err := invalidate(s.Cache, req.GetUri()); err != nil {
-			return nil, err
-		}
+		invErr := invalidate(s.Cache, req.GetUri())
 		if s.Notifier != nil {
+			// Notify even when the cache clear failed: the retry takes the
+			// identical-content path above, which does not notify, so skipping
+			// it here would drop the event for good.
 			// Best-effort: the version is durably stored even if the notify fails;
 			// subscribers still converge on the next TTL poll.
 			_ = s.Notifier.Publish(req.GetUri(), hash, class)
+		}
+		if invErr != nil {
+			return nil, invErr
 		}
 	}
 	return &pb.PublishPromptResponse{VersionHash: hash}, nil
@@ -143,9 +154,14 @@ func (s *Server) GetPrompt(ctx context.Context, req *pb.GetPromptRequest) (*pb.G
 
 // ListPrompts browses a repo (a URI prefix) like a filesystem: it returns the
 // served-HEAD prompts whose URI starts with the prefix. Auth scopes by the
-// prefix's org, so a scoped token can only list within its own org.
+// prefix's org, so a scoped token can only list within its own org. An empty
+// prefix lists everything the caller can read: all of it for an admin, the
+// token's own org for a scoped token.
 func (s *Server) ListPrompts(ctx context.Context, req *pb.ListPromptsRequest) (*pb.ListPromptsResponse, error) {
 	prefix := req.GetPrefix()
+	if scope := auth.Scope(ctx); prefix == "" && scope != "" {
+		prefix = validate.Scheme + scope + "/"
+	}
 	if err := auth.AuthorizePrefix(ctx, prefix); err != nil {
 		return nil, err
 	}
@@ -249,14 +265,28 @@ func (s *Server) MergeBranch(ctx context.Context, req *pb.MergeBranchRequest) (*
 	if err := auth.RequireWrite(ctx); err != nil {
 		return nil, err
 	}
+	onMain := branchOr(req.GetInto()) == store.DefaultBranch
+	var prev store.Prompt
+	if onMain {
+		prev, _ = s.Store.Get(ctx, req.GetUri())
+	}
 	hash, err := s.Store.Merge(ctx, req.GetUri(), branchOr(req.GetInto()), req.GetFrom(), auth.ScopeOf(ctx), req.GetMessage())
 	if err != nil {
 		return nil, branchErr(err)
 	}
-	// Merging into main moves the served HEAD — invalidate its cache.
-	if branchOr(req.GetInto()) == store.DefaultBranch {
-		if err := invalidate(s.Cache, req.GetUri()); err != nil {
-			return nil, err
+	// Merging into main moves the served HEAD — invalidate its cache and, when
+	// the served content changed, notify subscribers as a publish does.
+	// Notify even when the cache clear fails: a retried merge brings no new
+	// content, so it would not notify, and the event would be lost.
+	if onMain {
+		invErr := invalidate(s.Cache, req.GetUri())
+		if s.Notifier != nil {
+			if c, err := s.Store.GetCommit(ctx, hash); err == nil && c.VersionHash != prev.VersionHash {
+				_ = s.Notifier.Publish(req.GetUri(), c.VersionHash, s.classify(prev.Template, c.Template))
+			}
+		}
+		if invErr != nil {
+			return nil, invErr
 		}
 	}
 	return &pb.MergeBranchResponse{CommitHash: hash}, nil
@@ -266,15 +296,26 @@ func (s *Server) DiffCommits(ctx context.Context, req *pb.DiffCommitsRequest) (*
 	if err := auth.Authorize(ctx, req.GetUri()); err != nil {
 		return nil, err
 	}
-	from, err := s.Store.GetCommit(ctx, req.GetFromHash())
+	from, err := s.commitOf(ctx, req.GetUri(), req.GetFromHash())
 	if err != nil {
 		return nil, diffCommitErr(err)
 	}
-	to, err := s.Store.GetCommit(ctx, req.GetToHash())
+	to, err := s.commitOf(ctx, req.GetUri(), req.GetToHash())
 	if err != nil {
 		return nil, diffCommitErr(err)
 	}
 	return s.diff(from.Template, to.Template)
+}
+
+// commitOf loads a commit and requires it to belong to uri. Authorization was
+// checked against uri, so a commit of any other prompt is reported as not found,
+// exactly like a hash that does not exist.
+func (s *Server) commitOf(ctx context.Context, uri, hash string) (store.Commit, error) {
+	c, err := s.Store.GetCommit(ctx, hash)
+	if err == nil && c.URI != uri {
+		return store.Commit{}, store.ErrNotFound
+	}
+	return c, err
 }
 
 func diffCommitErr(err error) error {
@@ -398,6 +439,15 @@ func toWindows(ws []semdiff.Window) []*pb.Window {
 	return out
 }
 
+// splitLines splits a template into lines for the semantic diff. Both sides are
+// normalised to end in one newline first, so "a" and "a\n" diff the same (files
+// and echo add one; API callers may not). Normalising towards the newline, not
+// away from it, keeps an edit of the last text line a single "replace": semdiff
+// reports an edit of the very last element as delete + insert (priompt/proto#5).
 func splitLines(s string) []string {
-	return strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	if !strings.HasSuffix(s, "\n") {
+		s += "\n"
+	}
+	return strings.Split(s, "\n")
 }
