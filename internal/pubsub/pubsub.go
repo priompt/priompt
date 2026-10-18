@@ -96,11 +96,12 @@ type Config struct {
 	// Authenticate, when set alongside Token, also admits clients presenting a
 	// credential the API accepts (a tokens-file token, PRIOMPT_TOKEN, a
 	// priompt-auth JWT) as their NATS auth token. It returns the credential's
-	// org ("" = admin) and whether it is valid. Such clients may only subscribe
-	// — to their own org's subjects, or to every org for an admin credential —
-	// and never publish. Token stays the full-rights credential the server
-	// publishes with.
-	Authenticate func(token string) (org string, ok bool)
+	// org ("" = admin), when it expires (zero = never), and whether it is valid.
+	// Such clients may only subscribe — to their own org's subjects, or to every
+	// org for an admin credential — and never publish, and the broker closes
+	// their connection when the credential expires. Token stays the full-rights
+	// credential the server publishes with.
+	Authenticate func(token string) (org string, expires time.Time, ok bool)
 
 	// Users, when non-empty, is used instead of Token: per-user credentials with
 	// subject permissions, so a token scoped to one org can only subscribe to
@@ -206,7 +207,7 @@ func (c Config) options() *natsd.Options {
 // subscribe-only users scoped to their org.
 type clientAuth struct {
 	token string
-	check func(string) (string, bool)
+	check func(string) (string, time.Time, bool)
 }
 
 func (a clientAuth) Check(c natsd.ClientAuthentication) bool {
@@ -218,7 +219,7 @@ func (a clientAuth) Check(c natsd.ClientAuthentication) bool {
 	if tok == "" {
 		return false
 	}
-	org, ok := a.check(tok)
+	org, expires, ok := a.check(tok)
 	if !ok {
 		return false
 	}
@@ -227,7 +228,8 @@ func (a clientAuth) Check(c natsd.ClientAuthentication) bool {
 		sub = OrgSubject(org)
 	}
 	c.RegisterUser(&natsd.User{
-		Username: "priompt-subscriber",
+		Username:           "priompt-subscriber",
+		ConnectionDeadline: expires, // the subscription must not outlive the token
 		Permissions: &natsd.Permissions{
 			Subscribe: &natsd.SubjectPermission{Allow: []string{sub}},
 			Publish:   &natsd.SubjectPermission{Deny: []string{">"}},

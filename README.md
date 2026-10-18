@@ -242,6 +242,8 @@ priompt publish -uri priompt://acme/support/agent -file v1.txt -slot name
 #   PublishPrompt uri, template=…, branch="feature"   # served HEAD unchanged
 #   MergeBranch   uri, into="main", from="feature"     # served HEAD now = feature content
 #   History       uri, branch="main"                   # the commit log, newest first
+#   ListBranches  uri                                  # every branch and its tip
+#   ListCommits   uri                                  # every commit, even ones no branch reaches
 #   DiffCommits   uri, from_hash, to_hash              # semantic diff of any two commits
 ```
 
@@ -273,6 +275,8 @@ Behavior notes:
   source branch ("take theirs"); three-way content auto-merge is not yet
   implemented.
 - **History** walks the first-parent chain (the mainline), newest first.
+  **ListCommits** returns every commit of the prompt, including commits a
+  rollback left off every branch, so you can roll forward to them.
 
 ## When a prompt changes (pub/sub)
 
@@ -355,6 +359,9 @@ lets anyone forge an event that agents will act on. Set `-nats-token` (or
 `PRIOMPT_NATS_TOKEN`) whenever NATS is reachable off-loopback; the server
 refuses to bind a non-loopback address without one. Clients pass it in the URL:
 `nats://<token>@host:4222`.
+With API auth on as well, agents should connect with their own API token
+instead: it may only subscribe, only to its org's events (all orgs for an admin
+token), and the broker closes the connection when the token expires.
 
 Treat the event as a *hint*, not as data: reload by re-fetching over
 authenticated gRPC rather than trusting the version and classification in the
@@ -849,6 +856,8 @@ service PromptService {
   rpc DiffCommits(DiffCommitsRequest)     returns (DiffPromptResponse);   // diff any two commits
   rpc SetBranch(SetBranchRequest)         returns (SetBranchResponse);    // rollback / pin a branch
   rpc ListPrompts(ListPromptsRequest)     returns (ListPromptsResponse);  // browse a URI prefix as a tree
+  rpc ListBranches(ListBranchesRequest)   returns (ListBranchesResponse); // a prompt's branches and tips
+  rpc ListCommits(ListCommitsRequest)     returns (ListCommitsResponse);  // every commit of a prompt
 }
 ```
 
@@ -874,7 +883,7 @@ message Commit {
   string parent2 = 4;   // set only on merge commits
   string author = 5;
   string message = 6;
-  string created_at = 7;  // RFC3339
+  string created_at = 7;  // RFC3339Nano, UTC
 }
 
 message HistoryRequest      { string uri = 1; string branch = 2; }       // branch empty = "main"

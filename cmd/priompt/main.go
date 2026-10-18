@@ -255,23 +255,23 @@ func serve(args []string) {
 }
 
 // natsAuth checks a NATS client's token against the same providers the gRPC API
-// uses and returns the org it is scoped to ("" = admin). Nil when API auth is
-// disabled, leaving the broker on -nats-token alone.
-func natsAuth(providers []authn.Provider) func(string) (string, bool) {
+// uses and returns the org it is scoped to ("" = admin) and when it expires.
+// Nil when API auth is disabled, leaving the broker on -nats-token alone.
+func natsAuth(providers []authn.Provider) func(string) (string, time.Time, bool) {
 	if len(providers) == 0 {
 		return nil
 	}
-	return func(token string) (string, bool) {
+	return func(token string) (string, time.Time, bool) {
 		for _, p := range providers {
 			id, err := p.Authenticate(context.Background(), "Bearer "+token)
 			if err == nil {
-				return id.Org, true
+				return id.Org, id.Expires, true
 			}
 			if !errors.Is(err, authn.ErrUnrecognized) {
-				return "", false // e.g. expired
+				return "", time.Time{}, false // e.g. expired
 			}
 		}
-		return "", false
+		return "", time.Time{}, false
 	}
 }
 

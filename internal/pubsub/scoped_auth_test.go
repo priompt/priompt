@@ -13,14 +13,16 @@ import (
 func TestAPITokensAreScopedSubscribers(t *testing.T) {
 	bus, err := NewEmbedded(Config{
 		Host: "127.0.0.1", Port: -1, Token: "broker",
-		Authenticate: func(tok string) (string, bool) {
+		Authenticate: func(tok string) (string, time.Time, bool) {
 			switch tok {
 			case "acme-tok":
-				return "acme", true
+				return "acme", time.Time{}, true
 			case "admin-tok":
-				return "", true
+				return "", time.Time{}, true
+			case "short-tok":
+				return "acme", time.Now().Add(500 * time.Millisecond), true
 			}
-			return "", false
+			return "", time.Time{}, false
 		},
 	})
 	if err != nil {
@@ -109,4 +111,22 @@ func TestAPITokensAreScopedSubscribers(t *testing.T) {
 	broker.Publish(Subject("priompt://acme/x/y"), []byte("from-broker"))
 	broker.Flush()
 	expect(t, bAcme, "from-broker")
+
+	// A credential's expiry closes its connection: the subscription must not
+	// outlive the token.
+	closed := make(chan struct{})
+	short, err := connect(nats.Token("short-tok"), nats.NoReconnect(),
+		nats.ClosedHandler(func(*nats.Conn) { close(closed) }))
+	if err != nil {
+		t.Fatalf("short-lived token rejected: %v", err)
+	}
+	defer short.Close()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connection still open after its token expired")
+	}
+	if scoped.IsClosed() {
+		t.Fatal("a token without expiry was disconnected")
+	}
 }
