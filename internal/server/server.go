@@ -231,14 +231,48 @@ func (s *Server) History(ctx context.Context, req *pb.HistoryRequest) (*pb.Histo
 	if err != nil {
 		return nil, branchErr(err)
 	}
-	out := make([]*pb.Commit, len(log))
-	for i, c := range log {
+	return &pb.HistoryResponse{Commits: commitsPB(log)}, nil
+}
+
+// ListCommits returns every commit of a prompt, newest first, including commits
+// no branch reaches any more (left behind by a rollback), so they can be rolled
+// forward to.
+func (s *Server) ListCommits(ctx context.Context, req *pb.ListCommitsRequest) (*pb.ListCommitsResponse, error) {
+	if err := auth.Authorize(ctx, req.GetUri()); err != nil {
+		return nil, err
+	}
+	all, err := s.Store.Commits(ctx, req.GetUri())
+	if err != nil {
+		return nil, storeError(ctx, "list commits", err)
+	}
+	return &pb.ListCommitsResponse{Commits: commitsPB(all)}, nil
+}
+
+// ListBranches returns a prompt's branches and their tips, sorted by name.
+func (s *Server) ListBranches(ctx context.Context, req *pb.ListBranchesRequest) (*pb.ListBranchesResponse, error) {
+	if err := auth.Authorize(ctx, req.GetUri()); err != nil {
+		return nil, err
+	}
+	refs, err := s.Store.Branches(ctx, req.GetUri())
+	if err != nil {
+		return nil, storeError(ctx, "list branches", err)
+	}
+	out := make([]*pb.Branch, len(refs))
+	for i, r := range refs {
+		out[i] = &pb.Branch{Name: r.Branch, CommitHash: r.Commit}
+	}
+	return &pb.ListBranchesResponse{Branches: out}, nil
+}
+
+func commitsPB(cs []store.Commit) []*pb.Commit {
+	out := make([]*pb.Commit, len(cs))
+	for i, c := range cs {
 		out[i] = &pb.Commit{
 			Hash: c.Hash, VersionHash: c.VersionHash, Parent: c.Parent, Parent2: c.Parent2,
 			Author: c.Author, Message: c.Message, CreatedAt: c.CreatedAt.Format(time.RFC3339Nano),
 		}
 	}
-	return &pb.HistoryResponse{Commits: out}, nil
+	return out
 }
 
 func (s *Server) CreateBranch(ctx context.Context, req *pb.CreateBranchRequest) (*pb.CreateBranchResponse, error) {
