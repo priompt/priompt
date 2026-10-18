@@ -19,7 +19,16 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates           # for outbound TLS (embed API, redis)
 COPY --from=build /priompt /usr/local/bin/priompt
-WORKDIR /data                                     # priompt.db lives here; mount a volume
+# Run unprivileged. /data is owned by that user so a fresh named volume mounted
+# there inherits the ownership and is writable. A volume written by an older
+# image (which ran as root) needs a one-time
+#   docker run --rm -v <volume>:/data alpine chown -R 10001:10001 /data
+RUN addgroup -S -g 10001 priompt && adduser -S -D -H -u 10001 -G priompt priompt \
+ && mkdir /data && chown priompt:priompt /data
+USER priompt
+# priompt.db lives here (the default -db is relative); mount a volume.
+# Dockerfile has no trailing comments: keep comments on their own lines.
+WORKDIR /data
 EXPOSE 8443 2112 4222
 ENTRYPOINT ["priompt"]
 CMD ["serve"]

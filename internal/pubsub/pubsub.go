@@ -6,8 +6,10 @@
 package pubsub
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
@@ -29,19 +31,39 @@ type Event struct {
 // Subject maps a prompt URI to its NATS subject:
 //
 //	priompt://acme/support/agent  ->  priompt.acme.support.agent
+//	priompt://acme.corp/x/a.b     ->  priompt.acme%2Ecorp.x.a%2Eb
 //
-// URI segments are constrained by validate.URI, which rejects the characters
-// that are meaningful here — "." (a token separator), "*" and ">" (wildcards)
-// and whitespace — so the mapping cannot be used to forge a subject hierarchy
-// or turn a publish into a wildcard.
+// Each URI segment becomes one subject token. validate.URI allows "." inside a
+// segment, and "." is the NATS token separator, so every byte outside
+// [A-Za-z0-9_-] is percent-encoded. "%" never appears in a valid segment, so
+// distinct URIs always get distinct subjects, and no URI can forge extra
+// hierarchy or a wildcard ("*", ">").
 func Subject(uri string) string {
-	path := strings.TrimPrefix(uri, validate.Scheme)
-	return "priompt." + strings.ReplaceAll(path, "/", ".")
+	segs := strings.Split(strings.TrimPrefix(uri, validate.Scheme), "/")
+	for i, s := range segs {
+		segs[i] = subjectToken(s)
+	}
+	return "priompt." + strings.Join(segs, ".")
 }
 
 // OrgSubject is the wildcard covering every prompt in one org — the unit of
-// subscribe permission.
-func OrgSubject(org string) string { return "priompt." + org + ".>" }
+// subscribe permission. The org is encoded like Subject's first token, so
+// "priompt.acme.>" never matches org "acme.corp".
+func OrgSubject(org string) string { return "priompt." + subjectToken(org) + ".>" }
+
+// subjectToken percent-encodes every byte outside [A-Za-z0-9_-].
+func subjectToken(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z', '0' <= c && c <= '9', c == '_', c == '-':
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	return b.String()
+}
 
 // Bus is an embedded NATS server with a publishing client attached.
 type Bus struct {
@@ -70,6 +92,15 @@ type Config struct {
 	// SSE stream on a feature-flag service: the event channel carries the same
 	// identity and authorization as the request channel.
 	Token string
+
+	// Authenticate, when set alongside Token, also admits clients presenting a
+	// credential the API accepts (a tokens-file token, PRIOMPT_TOKEN, a
+	// priompt-auth JWT) as their NATS auth token. It returns the credential's
+	// org ("" = admin) and whether it is valid. Such clients may only subscribe
+	// — to their own org's subjects, or to every org for an admin credential —
+	// and never publish. Token stays the full-rights credential the server
+	// publishes with.
+	Authenticate func(token string) (org string, ok bool)
 
 	// Users, when non-empty, is used instead of Token: per-user credentials with
 	// subject permissions, so a token scoped to one org can only subscribe to
@@ -139,6 +170,8 @@ func (c Config) options() *natsd.Options {
 				Username: u.Name, Password: u.Password, Permissions: perms,
 			})
 		}
+	case c.Token != "" && c.Authenticate != nil:
+		o.CustomClientAuthentication = clientAuth{token: c.Token, check: c.Authenticate}
 	case c.Token != "":
 		o.Authorization = c.Token
 	}
@@ -167,6 +200,40 @@ func (c Config) options() *natsd.Options {
 		}
 	}
 	return o
+}
+
+// clientAuth admits the broker token with full rights and API credentials as
+// subscribe-only users scoped to their org.
+type clientAuth struct {
+	token string
+	check func(string) (string, bool)
+}
+
+func (a clientAuth) Check(c natsd.ClientAuthentication) bool {
+	tok := c.GetOpts().Token
+	if subtle.ConstantTimeCompare([]byte(tok), []byte(a.token)) == 1 {
+		c.RegisterUser(&natsd.User{Username: "priompt-server"})
+		return true
+	}
+	if tok == "" {
+		return false
+	}
+	org, ok := a.check(tok)
+	if !ok {
+		return false
+	}
+	sub := "priompt.>"
+	if org != "" {
+		sub = OrgSubject(org)
+	}
+	c.RegisterUser(&natsd.User{
+		Username: "priompt-subscriber",
+		Permissions: &natsd.Permissions{
+			Subscribe: &natsd.SubjectPermission{Allow: []string{sub}},
+			Publish:   &natsd.SubjectPermission{Deny: []string{">"}},
+		},
+	})
+	return true
 }
 
 // NewEmbedded starts an in-process NATS server and connects a publisher to it.

@@ -121,7 +121,7 @@ func TestSubjectPermissionsScopeByOrg(t *testing.T) {
 }
 
 // Subject mapping must not let a URI forge extra hierarchy or a wildcard.
-// validate.URI is what guarantees this, so keep them honest together.
+// Subject encodes each segment so that holds; see TestSubjectIsInjective.
 func TestSubjectMapping(t *testing.T) {
 	if got := Subject("priompt://acme/support/agent"); got != "priompt.acme.support.agent" {
 		t.Errorf("Subject = %q", got)
