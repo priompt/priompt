@@ -616,7 +616,7 @@ func watch(args []string) {
 	}
 	sub, err := pubsub.Connect(*natsURL)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(redactURL(err.Error())) // a parse error quotes the URL
 	}
 	defer sub.Close()
 	if _, err := sub.Subscribe(*uri, func(ev pubsub.Event) {
@@ -631,7 +631,7 @@ func watch(args []string) {
 	}); err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("watching %s on %s", *uri, *natsURL)
+	log.Printf("watching %s on %s", *uri, redactURL(*natsURL))
 	select {} // block forever; Ctrl-C to stop
 }
 
@@ -926,4 +926,19 @@ func (m *multiFlag) String() string { return fmt.Sprint([]string(*m)) }
 func (m *multiFlag) Set(v string) error {
 	*m = append(*m, v)
 	return nil
+}
+
+// redactURL replaces the credentials in a (comma-separated) NATS URL, or in an
+// error message quoting one, with *** for logging:
+// nats://token@host:4222 -> nats://***@host:4222.
+func redactURL(raw string) string {
+	parts := strings.Split(raw, ",")
+	for i, p := range parts {
+		if s := strings.Index(p, "://"); s >= 0 {
+			if at := strings.LastIndex(p, "@"); at > s {
+				parts[i] = p[:s+3] + "***" + p[at:]
+			}
+		}
+	}
+	return strings.Join(parts, ",")
 }
