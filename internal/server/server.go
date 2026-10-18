@@ -91,13 +91,17 @@ func (s *Server) PublishPrompt(ctx context.Context, req *pb.PublishPromptRequest
 		// A publish that cannot clear the cache has not taken effect for
 		// readers, so fail it rather than report a success that agents will not
 		// see. The version is already durable; the caller retries.
-		if err := invalidate(s.Cache, req.GetUri()); err != nil {
-			return nil, err
-		}
+		invErr := invalidate(s.Cache, req.GetUri())
 		if s.Notifier != nil {
+			// Notify even when the cache clear failed: the retry takes the
+			// identical-content path above, which does not notify, so skipping
+			// it here would drop the event for good.
 			// Best-effort: the version is durably stored even if the notify fails;
 			// subscribers still converge on the next TTL poll.
 			_ = s.Notifier.Publish(req.GetUri(), hash, class)
+		}
+		if invErr != nil {
+			return nil, invErr
 		}
 	}
 	return &pb.PublishPromptResponse{VersionHash: hash}, nil
