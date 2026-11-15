@@ -71,10 +71,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/priompt/auth v0.7.2 h1:Z3hEr3J2yUvekgm5oaSlC4eQLM9ht7+3aq8nTz1oup4=
 github.com/priompt/auth v0.7.2/go.mod h1:TH3Na+pjIFNuxTTuwsEbZlXtNeq5x8eys48pyQM+bLc=
-github.com/priompt/db-adapters v0.7.2 h1:oFvI+CiRhq0p1MKfgC8iIA3Kz66v0rDAYH0KKXo93Kg=
-github.com/priompt/db-adapters v0.7.2/go.mod h1:8vwOD7QGmMkYMrsRDB4YKG0woaS9IKNu5p5bPvsqF4s=
-github.com/priompt/db-adapters v0.7.3-0.20261115044000-3a9450da4aee h1:IPUptx7O1452VMl+nEFqFA5swd6mnTKa2FAKl2pfVpY=
-github.com/priompt/db-adapters v0.7.3-0.20261115044000-3a9450da4aee/go.mod h1:8vwOD7QGmMkYMrsRDB4YKG0woaS9IKNu5p5bPvsqF4s=
+github.com/priompt/db-adapters v0.7.3 h1:omeJtJiqq/JJYt3FeuesD216h+GwQpNVzToE1ghEKdo=
+github.com/priompt/db-adapters v0.7.3/go.mod h1:8vwOD7QGmMkYMrsRDB4YKG0woaS9IKNu5p5bPvsqF4s=
 github.com/priompt/proto v0.7.2 h1:c786LYd1cOlyO+S7Rasqr+CZZfakR2YTZNmjeAOzu/8=
 github.com/priompt/proto v0.7.2/go.mod h1:vwz0jk/O+rIf7LYwd20dtLzBtLvnKIbYsL9SFMf6gaY=
 github.com/prometheus/client_golang v1.23.2 h1:Je96obch5RDVy3FDMndoUsjAhG5Edi49h0RJWRi/o0o=
