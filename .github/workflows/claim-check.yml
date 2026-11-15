@@ -1,0 +1,14 @@
+# Flags PRs that skip the claim process in CONTRIBUTING.md (comments only).
+name: claim-check
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  check:
+    uses: priompt/.github/.github/workflows/claim-check.yml@main
