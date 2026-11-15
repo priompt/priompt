@@ -115,7 +115,9 @@ print(prompt.template.format(name="Ada", org="Acme"))   # Hi Ada, welcome to Acm
 
 Set `PRIOMPT_SEED=false` (or `serve -seed=false`) to disable the demo prompt in
 real deployments. `docker compose up` in this repo does the same thing with
-persistent storage — see [docker-compose.yml](docker-compose.yml).
+persistent storage — see [docker-compose.yml](docker-compose.yml). It keeps NATS
+on the container's loopback; to subscribe from the host, set both
+`PRIOMPT_NATS_ADDR=0.0.0.0:4222` and `PRIOMPT_NATS_TOKEN`.
 
 ## Quick start (from source)
 
