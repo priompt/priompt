@@ -148,6 +148,16 @@ func (s *Server) GetPrompt(ctx context.Context, req *pb.GetPromptRequest) (*pb.G
 	}
 	if s.Cache != nil {
 		s.Cache.Put(uri, resp)
+		// A publish can commit and invalidate between the read above and this
+		// Put, which would leave the old version cached for the full TTL (on
+		// every node, with Redis) after subscribers were told it changed.
+		// Re-read once: if the served version moved, drop what was just cached.
+		// Only cache misses pay for this, and the store is shared across nodes.
+		if now, err := s.Store.Get(ctx, uri); err != nil || now.VersionHash != p.VersionHash {
+			if err := s.Cache.Invalidate(uri); err != nil {
+				log.Printf("cache invalidate %s after a racing publish: %v", uri, err)
+			}
+		}
 	}
 	return resp, nil
 }
