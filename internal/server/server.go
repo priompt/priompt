@@ -434,6 +434,11 @@ func (s *Server) classify(oldT, newT string) string {
 		return ""
 	}
 	res, err := semdiff.Analyze(s.Embedder, splitLines(oldT), splitLines(newT))
+	if errors.Is(err, semdiff.ErrTooLarge) {
+		// Too large to analyze is not "no change": hold it like a structural
+		// change rather than let agents auto-reload something nobody measured.
+		return "structural"
+	}
 	if err != nil {
 		// A publish is not failed over this — the version is durable and correct,
 		// and the verdict is advisory. But it must not vanish silently: the
@@ -451,6 +456,9 @@ func (s *Server) classify(oldT, newT string) string {
 // the wire type. Shared by DiffPrompt and DiffCommits.
 func (s *Server) diff(oldT, newT string) (*pb.DiffPromptResponse, error) {
 	results, err := semdiff.Analyze(s.Embedder, splitLines(oldT), splitLines(newT))
+	if errors.Is(err, semdiff.ErrTooLarge) {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	if err != nil {
 		// The embedding endpoint URL and key can appear in transport errors.
 		log.Printf("diff: %v", err)
