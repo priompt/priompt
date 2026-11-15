@@ -498,8 +498,9 @@ Selected flags:
 
 - **`serve`** — `-addr`, `-db`, `-tls-cert`, `-tls-key`, `-client-ca` (mTLS),
   `-tokens-file`, `-cache-ttl`, `-redis-url`, `-embed-url`, `-embed-model`,
-  `-nats-addr`, `-metrics-addr`, `-rate-limit`, `-rate-burst`,
-  `-auth-jwks-url` (trust priompt-auth JWTs).
+  `-nats-addr`, `-nats-token`, `-nats-routes`, `-nats-cluster-addr`,
+  `-nats-cluster-secret`, `-metrics-addr`, `-rate-limit`, `-rate-burst`,
+  `-seed`, `-auth-jwks-url` (trust priompt-auth JWTs).
 - **`put`** — `-uri`, `-file` (`-` for stdin), `-slot` (repeatable), `-db`,
   `-force`, `-embed-url`, `-embed-model`.
 - **`publish`** — `-addr`, `-uri`, `-file`, `-slot` (repeatable), `-tls`,
@@ -796,9 +797,11 @@ priompt serve -redis-url redis://localhost:6379/0   # or PRIOMPT_REDIS_URL
 
 Both backends implement the same `Cache` interface
 ([internal/server/cache.go](internal/server/cache.go),
-[internal/server/redis_cache.go](internal/server/redis_cache.go)). Every cache
-op is best-effort — a Redis hiccup degrades to a cache miss, never a serving
-error.
+[internal/server/redis_cache.go](internal/server/redis_cache.go)). Read errors are best-effort:
+a cache failure is treated as a miss. Invalidation is fail-closed. If clearing the cache fails
+after publishing, merging into `main`, or moving `main` with `SetBranch`, the RPC returns
+`Unavailable` even though the write is durable. Retrying is safe and retries the cache clear
+before reporting success.
 
 ## Monitoring & rate limiting
 
@@ -832,6 +835,11 @@ curl localhost:2112/metrics
 | `PRIOMPT_EMBED_KEY` | server, `put` | API key for the embeddings endpoint |
 | `PRIOMPT_REDIS_URL` | server | Redis URL for a shared L2 cache |
 | `PRIOMPT_JWKS_URL` | server | priompt-auth `/jwks` URL; accept its short-lived JWTs |
+| `PRIOMPT_NATS_CLUSTER_ADDR` | server | NATS cluster route listener address for multi-node deployments |
+| `PRIOMPT_NATS_CLUSTER_SECRET` | server | Shared secret for cluster peers; required for off-loopback route listeners |
+| `PRIOMPT_NATS_ROUTES` | server | Comma-separated peer routes for NATS clustering |
+| `PRIOMPT_NATS_TOKEN` | server | Token required for NATS subscribers when the broker is reachable off-loopback |
+| `PRIOMPT_NATS_URL` | `watch` | NATS URL for change-event subscriptions; defaults to `nats://127.0.0.1:4222` |
 | `PRIOMPT_ENCRYPTION_KEY` | server, `put`, `backup` | base64 32-byte key; AES-256-GCM at-rest encryption |
 | `PRIOMPT_GIT_TOKEN` | `promptctl` (cli repo) | token for HTTPS git remotes |
 
