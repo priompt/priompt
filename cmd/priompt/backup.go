@@ -63,15 +63,10 @@ func backup(args []string) {
 	defer st.Close()
 	ctx := context.Background()
 
-	prompts, err := st.Dump(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	commits, err := st.DumpCommits(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	refs, err := st.DumpRefs(ctx)
+	// One read transaction: backup runs against a live database, and three
+	// separate reads let a publish land in between, leaving refs that name
+	// commits the file does not contain.
+	prompts, commits, refs, err := st.Snapshot(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -149,6 +144,7 @@ func restore(args []string) {
 	}
 
 	var nP, nC, nR, legacy int
+	seen := map[string]bool{} // commits restored so far; refs must name one
 	dec := json.NewDecoder(r)
 	for {
 		var raw json.RawMessage
@@ -173,10 +169,21 @@ func restore(args []string) {
 				if err := st.PutCommit(ctx, *rec.Commit); err != nil {
 					log.Fatal(err)
 				}
+				seen[rec.Commit.Hash] = true
 				nC++
 			}
 		case "ref":
 			if rec.Ref != nil {
+				// A ref to a commit that is in neither the file nor the target
+				// would leave the branch pointing at nothing: history, rollback
+				// and the next commit on it all break. Backups list commits
+				// before refs, so this check needs no buffering.
+				if !seen[rec.Ref.Commit] {
+					if _, err := st.GetCommit(ctx, rec.Ref.Commit); err != nil {
+						log.Fatalf("backup is inconsistent: branch %s of %s points at commit %s, which it does not contain (%v)",
+							rec.Ref.Branch, rec.Ref.URI, rec.Ref.Commit, err)
+					}
+				}
 				if err := st.PutRef(ctx, *rec.Ref); err != nil {
 					log.Fatal(err)
 				}
