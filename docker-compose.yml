@@ -6,9 +6,10 @@ services:
       - "8443:8443"       # gRPC
       - "127.0.0.1:2112:2112"   # Prometheus /metrics — keep off the public interface
       # NATS carries every change event (prompt address, version, semantic
-      # verdict) and agents act on the verdict, so publishing this port requires
-      # PRIOMPT_NATS_TOKEN. The server refuses to bind NATS off-loopback without
-      # one. Bound to localhost here; set the token before widening it.
+      # verdict) and agents act on the verdict, so the server refuses to bind it
+      # off-loopback without PRIOMPT_NATS_TOKEN. By default NATS stays on the
+      # container's loopback and this mapping reaches nothing; to subscribe from
+      # the host set BOTH PRIOMPT_NATS_ADDR=0.0.0.0:4222 and PRIOMPT_NATS_TOKEN.
       - "127.0.0.1:4222:4222"   # NATS pub/sub
     volumes:
       - priompt-data:/data            # SQLite db persists here
@@ -20,14 +21,14 @@ services:
       PRIOMPT_EMBED_MODEL: "${PRIOMPT_EMBED_MODEL:-}"
       PRIOMPT_EMBED_KEY: "${PRIOMPT_EMBED_KEY:-}"
       PRIOMPT_REDIS_URL: "${PRIOMPT_REDIS_URL:-}" # blank = in-process cache
-      PRIOMPT_NATS_TOKEN: "${PRIOMPT_NATS_TOKEN:-}" # required once NATS is published off-loopback
+      PRIOMPT_NATS_TOKEN: "${PRIOMPT_NATS_TOKEN:-}" # required with PRIOMPT_NATS_ADDR=0.0.0.0:4222
       PRIOMPT_ENCRYPTION_KEY: "${PRIOMPT_ENCRYPTION_KEY:-}" # base64 of 32 bytes; encrypts prompts at rest
     # All serve flags. Drop the ones you don't need.
     command:
       - serve
       - -addr=:8443
       - -db=/data/priompt.db
-      - -nats-addr=0.0.0.0:4222
+      - -nats-addr=${PRIOMPT_NATS_ADDR:-127.0.0.1:4222}  # 0.0.0.0:4222 needs PRIOMPT_NATS_TOKEN
       - -metrics-addr=:2112
       - -cache-ttl=30s
       - -rate-limit=0
