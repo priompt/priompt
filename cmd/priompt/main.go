@@ -440,7 +440,7 @@ func embedName(url, model string) string {
 	if url == "" {
 		return "lexical(offline)"
 	}
-	return model + "@" + url
+	return model + "@" + redactEmbedURL(url)
 }
 
 func put(args []string) {
@@ -1004,4 +1004,27 @@ func redactURL(raw string) string {
 		}
 	}
 	return strings.Join(parts, ",")
+}
+
+// redactEmbedURL strips user info and query string from an embeddings URL
+// for safe logging: https://user:pass@host/v1/embeddings?api-key=abc -> https://host/v1/embeddings
+func redactEmbedURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		// Fall back to host only if parsing fails
+		if s := strings.Index(raw, "://"); s >= 0 {
+			host := raw[s+3:]
+			if i := strings.Index(host, "/"); i >= 0 {
+				host = host[:i]
+			}
+			if at := strings.LastIndex(host, "@"); at >= 0 {
+				host = host[at+1:]
+			}
+			return raw[:s+3] + host
+		}
+		return raw
+	}
+	u.User = nil
+	u.RawQuery = ""
+	return u.String()
 }
