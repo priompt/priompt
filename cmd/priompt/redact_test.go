@@ -17,6 +17,25 @@ func TestRedactURL(t *testing.T) {
 	}
 }
 
+// serve logs the embeddings URL at startup; user info and query (where some
+// endpoints take the key) must not reach the log.
+func TestEmbedName(t *testing.T) {
+	for in, want := range map[string]string{
+		"": "lexical(offline)",
+		"https://embed.example.com/v1/embeddings":                             "m@https://embed.example.com/v1/embeddings",
+		"http://127.0.0.1:8080/v1/embeddings":                                 "m@http://127.0.0.1:8080/v1/embeddings",
+		"https://user:s3cret@embed.example.com/v1/embeddings?api-key=abc":     "m@https://***@embed.example.com/v1/embeddings?***",
+		"https://tok@embed.example.com/v1/embeddings":                         "m@https://***@embed.example.com/v1/embeddings",
+		"https://embed.example.com/openai/deployments/d/embeddings?api-key=k": "m@https://embed.example.com/openai/deployments/d/embeddings?***",
+		"https://embed.example.com/v1/embeddings#key=abc":                     "m@https://embed.example.com/v1/embeddings",
+		"https://u:p@embed.example.com:bad/v1?api-key=abc":                    "m@***",
+	} {
+		if got := embedName(in, "m"); got != want {
+			t.Errorf("embedName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // Connect errors can quote the URL; they are redacted with the same function.
 func TestRedactURLInError(t *testing.T) {
 	in := `parse "nats://s3cr3t@127.0.0.1:bad": invalid port ":bad" after host`

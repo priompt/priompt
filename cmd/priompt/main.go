@@ -436,11 +436,28 @@ func buildEmbedder(url, model, key string) semdiff.Embedder {
 	return semdiff.LexicalEmbedder{}
 }
 
-func embedName(url, model string) string {
-	if url == "" {
+// embedName describes the embedder for the startup log. User info and the query
+// string (some endpoints take the key there) become ***; the fragment is
+// dropped. An unparseable URL is not printed at all.
+func embedName(raw, model string) string {
+	if raw == "" {
 		return "lexical(offline)"
 	}
-	return model + "@" + url
+	u, err := url.Parse(raw)
+	if err != nil {
+		return model + "@***"
+	}
+	hadUser := u.User != nil
+	u.User = nil
+	if u.RawQuery != "" || u.ForceQuery {
+		u.RawQuery, u.ForceQuery = "***", false
+	}
+	u.Fragment, u.RawFragment = "", ""
+	s := u.String()
+	if hadUser { // url.User would escape the *s
+		s = strings.Replace(s, "//", "//***@", 1)
+	}
+	return model + "@" + s
 }
 
 func put(args []string) {
