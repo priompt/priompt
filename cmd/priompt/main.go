@@ -133,6 +133,7 @@ func serve(args []string) {
 	metricsAddr := fs.String("metrics-addr", ":2112", "Prometheus /metrics listen address; empty disables it")
 	rateLimit := fs.Float64("rate-limit", 0, "per-org request/sec limit; 0 disables")
 	rateBurst := fs.Int("rate-burst", 0, "per-org burst size; 0 = equal to -rate-limit")
+	jwksRequireHTTPS := fs.Bool("auth-jwks-require-https", os.Getenv("PRIOMPT_JWKS_REQUIRE_HTTPS") == "true", "refuse to start when -auth-jwks-url is plain HTTP to a non-loopback host, instead of warning")
 	seed := fs.Bool("seed", os.Getenv("PRIOMPT_SEED") != "false", "seed a demo prompt when it is absent (PRIOMPT_SEED=false disables)")
 	jwksURL := fs.String("auth-jwks-url", os.Getenv("PRIOMPT_JWKS_URL"), "priompt-auth /jwks URL; accepts its short-lived JWTs alongside static tokens")
 	fs.Parse(args)
@@ -150,6 +151,16 @@ func serve(args []string) {
 		providers = append(providers, authn.NewStatic(tokens))
 	}
 	if *jwksURL != "" {
+		if insecureJWKSURL(*jwksURL) {
+			msg := fmt.Sprintf("-auth-jwks-url %s is plain HTTP to a non-loopback host: "+
+				"anyone who can tamper with that traffic can swap in their own key and mint "+
+				"tokens this server accepts. Use https:// or keep the link on a private network",
+				redactURL(*jwksURL))
+			if *jwksRequireHTTPS {
+				log.Fatal(msg + " (-auth-jwks-require-https is set)")
+			}
+			log.Print("WARNING: " + msg)
+		}
 		providers = append(providers, authn.NewJWKS(*jwksURL))
 	}
 	embedKey := os.Getenv("PRIOMPT_EMBED_KEY")
@@ -403,6 +414,14 @@ func isLoopback(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// insecureJWKSURL reports whether raw is an http:// URL to a host that is not
+// loopback. The keys fetched from it decide which JWTs are trusted, so a
+// tamperable fetch lets an attacker mint tokens.
+func insecureJWKSURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "http" && !isLoopback(u.Hostname())
 }
 
 func envOr(key, def string) string {
