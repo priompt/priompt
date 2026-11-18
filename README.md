@@ -501,7 +501,7 @@ Selected flags:
 - **`serve`** — `-addr`, `-db`, `-tls-cert`, `-tls-key`, `-client-ca` (mTLS),
   `-tokens-file`, `-cache-ttl`, `-redis-url`, `-embed-url`, `-embed-model`,
   `-nats-addr`, `-metrics-addr`, `-rate-limit`, `-rate-burst`,
-  `-auth-jwks-url` (trust priompt-auth JWTs).
+  `-auth-jwks-url` (trust priompt-auth JWTs), `-auth-jwks-require-https`.
 - **`put`** — `-uri`, `-file` (`-` for stdin), `-slot` (repeatable), `-db`,
   `-force`, `-embed-url`, `-embed-model`.
 - **`publish`** — `-addr`, `-uri`, `-file`, `-slot` (repeatable), `-tls`,
@@ -627,6 +627,13 @@ them **offline** against cached `/jwks` keys — no per-request call to the
 issuer, and static tokens keep working alongside. A JWT carries the same
 permission model (`org` scope, `rw` grant, expiry); SSO group mapping,
 rotation, and offboarding live in the issuer and your IdP.
+
+> The keys fetched from `-auth-jwks-url` decide which JWTs the server trusts, so
+> use `https://` or keep the link on a private network. Plain `http://` to a
+> non-loopback host is accepted but logs a startup warning, because anyone who
+> can tamper with that traffic can substitute their own key and mint tokens.
+> Pass `-auth-jwks-require-https` (or `PRIOMPT_JWKS_REQUIRE_HTTPS=true`) to
+> refuse to start instead.
 
 Both credential paths — the tokens file and the JWTs — are implemented in the
 auth repo's `github.com/priompt/auth/authn` package, which this server imports. Minting and
@@ -834,6 +841,7 @@ curl localhost:2112/metrics
 | `PRIOMPT_EMBED_KEY` | server, `put` | API key for the embeddings endpoint |
 | `PRIOMPT_REDIS_URL` | server | Redis URL for a shared L2 cache |
 | `PRIOMPT_JWKS_URL` | server | priompt-auth `/jwks` URL; accept its short-lived JWTs |
+| `PRIOMPT_JWKS_REQUIRE_HTTPS` | server | `true` refuses to start when the JWKS URL is plain HTTP to a non-loopback host |
 | `PRIOMPT_ENCRYPTION_KEY` | server, `put`, `backup` | base64 32-byte key; AES-256-GCM at-rest encryption |
 | `PRIOMPT_GIT_TOKEN` | `promptctl` (cli repo) | token for HTTPS git remotes |
 
