@@ -8,8 +8,8 @@ func TestConnURL(t *testing.T) {
 	}{
 		{"priompt://deadbeef@example.com:8443", "example.com:8443", "deadbeef"},
 		{"priompt://example.com:8443", "example.com:8443", ""}, // no token
-		{"localhost:8443", "localhost:8443", ""},                 // bare host, no scheme
-		{"", "", ""},                                             // unset
+		{"localhost:8443", "localhost:8443", ""},               // bare host, no scheme
+		{"", "", ""},                                           // unset
 	}
 	for _, c := range cases {
 		t.Setenv("PRIOMPT_URL", c.raw)
