@@ -273,6 +273,11 @@ Behavior notes:
   (already durable) takes effect on retry. The same applies to rollback.
 - **Publishing to a non-`main` branch** records a commit but does not change the
   served HEAD, invalidate the cache, or notify subscribers.
+- **Publishing to a branch that does not exist** fails with `NOT_FOUND` when the
+  prompt already exists, so a typo (`deev` for `dev`) cannot create a stray
+  branch with no shared history. Create the branch first with `CreateBranch`.
+  The first publish of a brand-new prompt may name any branch; it becomes the
+  root commit.
 - **Merging** records a two-parent merge commit. Merge content is taken from the
   source branch ("take theirs"); three-way content auto-merge is not yet
   implemented.
@@ -883,7 +888,8 @@ message PublishPromptRequest {
   string template = 2;
   repeated string slots = 3;
   string message = 4;   // optional commit message
-  string branch  = 5;   // target branch; empty = "main"
+  string branch  = 5;   // target branch; empty = "main". Must already exist
+                        // unless this is the prompt's first publish.
 }
 
 message Commit {
