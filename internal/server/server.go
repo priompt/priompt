@@ -61,8 +61,30 @@ func (s *Server) PublishPrompt(ctx context.Context, req *pb.PublishPromptRequest
 	// On a real change, classify the edit so the notification carries the verdict.
 	class := ""
 	if !onMain {
-		if tip, err := s.Store.Resolve(ctx, req.GetUri(), branch); err == nil && tip.VersionHash == hash {
-			return &pb.PublishPromptResponse{VersionHash: hash}, nil
+		refs, err := s.Store.Branches(ctx, req.GetUri())
+		if err != nil {
+			return nil, storeError(ctx, "publish", err)
+		}
+		tip := ""
+		for _, r := range refs {
+			if r.Branch == branch {
+				tip = r.Commit
+				break
+			}
+		}
+		// A branch is created only by the first publish of a brand-new prompt
+		// (nothing to share history with). For an existing prompt, a missing
+		// branch is almost always a typo; committing would create an orphan
+		// branch rooted at a parentless commit, so refuse and point at
+		// CreateBranch, which forks from an existing commit.
+		if tip == "" && len(refs) > 0 {
+			return nil, status.Errorf(codes.NotFound,
+				"branch %q does not exist for %s; create it with CreateBranch first", branch, req.GetUri())
+		}
+		if tip != "" {
+			if c, err := s.Store.GetCommit(ctx, tip); err == nil && c.VersionHash == hash {
+				return &pb.PublishPromptResponse{VersionHash: hash}, nil
+			}
 		}
 	}
 	if onMain {
