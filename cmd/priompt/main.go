@@ -326,11 +326,9 @@ func checkEncryptionKey(st *store.Store) error {
 	if err == nil {
 		return nil
 	}
-	var syntax *json.SyntaxError
 	switch {
-	case os.Getenv("PRIOMPT_ENCRYPTION_KEY") == "" && errors.As(err, &syntax):
-		// No key: encrypted columns pass through as "enc1:…" and the slots column
-		// fails to parse as JSON.
+	case errors.Is(err, store.ErrEncryptionKeyMissing):
+		// No key here, but the store found rows that were written encrypted.
 		return errors.New("encryption key missing or wrong: the database holds encrypted prompts " +
 			"but PRIOMPT_ENCRYPTION_KEY is not set")
 	case os.Getenv("PRIOMPT_ENCRYPTION_KEY") != "" && strings.Contains(err.Error(), "decrypt column"):
